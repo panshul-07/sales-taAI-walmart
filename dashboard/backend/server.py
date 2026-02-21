@@ -162,11 +162,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == '/api/stores':
             stores = (
-                MODEL_DF.groupby('Store', as_index=False)['Weekly_Sales']
-                .agg(['count', 'mean', 'sum'])
-                .reset_index()
+                MODEL_DF.groupby('Store', as_index=False)
+                .agg(
+                    records=('Weekly_Sales', 'count'),
+                    avg_sales=('Weekly_Sales', 'mean'),
+                    total_sales=('Weekly_Sales', 'sum'),
+                )
             )
-            stores.columns = ['Store', 'records', 'avg_sales', 'total_sales']
             out = stores.sort_values('Store').to_dict(orient='records')
             for row in out:
                 row['Store'] = int(row['Store'])
