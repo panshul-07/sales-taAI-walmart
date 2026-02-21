@@ -13,13 +13,13 @@
 
       const css = `
         :root {
-          --bg: #0a1020;
-          --panel: rgba(16, 28, 56, 0.72);
-          --panel-border: rgba(199, 220, 255, 0.22);
-          --accent: #6fd2ff;
-          --accent-2: #8dffa3;
-          --text: #e8f2ff;
-          --muted: #9ab4d4;
+          --bg: #061318;
+          --panel: rgba(8, 42, 49, 0.72);
+          --panel-border: rgba(219, 191, 122, 0.34);
+          --accent: #0f8f8d;
+          --accent-2: #d0ae62;
+          --text: #f7f4ec;
+          --muted: #cfbe95;
         }
 
         * { box-sizing: border-box; }
@@ -29,9 +29,9 @@
           font-family: "Segoe UI", "Avenir Next", system-ui, sans-serif;
           color: var(--text);
           background:
-            radial-gradient(1200px 700px at 80% -10%, rgba(63, 135, 255, 0.25), transparent 60%),
-            radial-gradient(1000px 600px at -10% 110%, rgba(13, 191, 142, 0.25), transparent 55%),
-            linear-gradient(145deg, #071022 0%, #09172f 50%, #071022 100%);
+            radial-gradient(1200px 700px at 90% -5%, rgba(208, 174, 98, 0.25), transparent 58%),
+            radial-gradient(1100px 700px at -8% 108%, rgba(15, 143, 141, 0.35), transparent 62%),
+            linear-gradient(145deg, #041015 0%, #08232a 48%, #05141a 100%);
           min-height: 100vh;
         }
 
@@ -43,8 +43,8 @@
           background-repeat: no-repeat;
           background-position: center;
           background-size: min(58vw, 560px);
-          opacity: 0.07;
-          filter: grayscale(0.05) contrast(1.1);
+          opacity: 0.11;
+          filter: saturate(1.08) contrast(1.06);
           pointer-events: none;
           z-index: 0;
         }
@@ -77,9 +77,9 @@
           padding: 8px 12px;
           border-radius: 999px;
           border: 1px solid var(--panel-border);
-          background: rgba(111, 210, 255, 0.12);
+          background: rgba(208, 174, 98, 0.15);
           font-size: 0.9rem;
-          color: #d7f3ff;
+          color: #f7ebcf;
         }
 
         .controls, .cards, .grid {
@@ -123,8 +123,8 @@
 
         .control select, .control input {
           width: 100%;
-          border: 1px solid rgba(186, 214, 255, 0.35);
-          background: rgba(8, 20, 42, 0.9);
+          border: 1px solid rgba(219, 191, 122, 0.45);
+          background: rgba(5, 30, 36, 0.92);
           color: var(--text);
           border-radius: 10px;
           padding: 9px;
@@ -144,7 +144,7 @@
         .card .v {
           font-weight: 700;
           font-size: clamp(1.05rem, 1.6vw, 1.45rem);
-          color: #f4fbff;
+          color: #fff9ee;
         }
 
         .plot-panel {
@@ -243,7 +243,7 @@
         const plotTheme = {
           paper_bgcolor: "rgba(0,0,0,0)",
           plot_bgcolor: "rgba(0,0,0,0)",
-          font: { color: "#deebff", family: "Segoe UI, sans-serif" },
+          font: { color: "#f5ebd4", family: "Segoe UI, sans-serif" },
           margin: { l: 55, r: 25, t: 55, b: 45 },
         };
 
@@ -254,7 +254,7 @@
             type: "scatter",
             mode: "lines",
             name: "Actual Sales",
-            line: { width: 2.5, color: "#80e5ff" },
+            line: { width: 2.5, color: "#1fc8c3" },
           },
           {
             x: ts.date,
@@ -262,15 +262,15 @@
             type: "scatter",
             mode: "lines",
             name: "Predicted Sales",
-            line: { width: 2, color: "#9cffb1", dash: "dot" },
+            line: { width: 2, color: "#e1bf72", dash: "dot" },
           },
         ];
 
         const depColors = {
-          CPI: "#7bdff6",
-          Unemployment: "#f7d6e0",
-          Fuel_Price: "#f2b5d4",
-          Temperature: "#b2f7ef",
+          CPI: "#e1bf72",
+          Unemployment: "#6dd9c8",
+          Fuel_Price: "#f5d48d",
+          Temperature: "#2ecac5",
         };
 
         const depData = Object.entries(deps).map(([k, val]) => ({
@@ -289,7 +289,7 @@
             type: "scatter",
             mode: "lines",
             name: "Sales",
-            line: { color: "#90e0ef", width: 2.2 },
+            line: { color: "#33d0c8", width: 2.2 },
             yaxis: "y",
           },
           {
@@ -298,7 +298,7 @@
             type: "scatter",
             mode: "lines",
             name: feature,
-            line: { color: "#f9c74f", width: 2 },
+            line: { color: "#e3bf74", width: 2 },
             yaxis: "y2",
           },
         ];
@@ -354,7 +354,7 @@
                 value: weeks,
                 onChange: (e) => setWeeks(Number(e.target.value)),
               }),
-              React.createElement("div", { style: { color: "#9ab4d4", marginTop: "6px", fontSize: "0.9rem" } }, `${weeks} weeks`)
+              React.createElement("div", { style: { color: "#cfbe95", marginTop: "6px", fontSize: "0.9rem" } }, `${weeks} weeks`)
             ),
             React.createElement(
               "div",
@@ -374,7 +374,7 @@
               React.createElement("label", null, "Model status"),
               React.createElement(
                 "div",
-                { style: { paddingTop: "10px", color: "#caf5d8", fontWeight: 600 } },
+                { style: { paddingTop: "10px", color: "#f2dcaa", fontWeight: 600 } },
                 `ExtraTrees live | MAPE ${fmt(model.mape_pct)}%`
               )
             )
@@ -427,7 +427,11 @@
                     x: corr.labels,
                     y: corr.labels,
                     type: "heatmap",
-                    colorscale: "RdBu",
+                    colorscale: [
+                      [0.0, "#0b5e67"],
+                      [0.5, "#f1e6cb"],
+                      [1.0, "#b58e48"],
+                    ],
                     zmid: 0,
                   },
                 ],

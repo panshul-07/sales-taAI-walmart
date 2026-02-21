@@ -1,0 +1,12 @@
+{
+  "name": "walmart-forecast-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive Walmart sales forecasting dashboard",
+  "scripts": {
+    "frontend": "/usr/local/bin/python3 dashboard/backend/server.py",
+    "dev": "/usr/local/bin/python3 dashboard/backend/server.py",
+    "start": "/usr/local/bin/python3 dashboard/backend/server.py"
+  }
+}
+

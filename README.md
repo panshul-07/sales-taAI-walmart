@@ -17,11 +17,16 @@ Interactive 45-store sales forecasting dashboard built with:
 ## Local Run
 
 ```bash
-cd "dashboard"
-/usr/local/bin/python3 backend/server.py
+cd "/Users/panshulaj/Documents/sale forecasting"
+npm run frontend
 ```
 
 Open: `http://localhost:8080`
+
+## Frontend Code Location
+
+- Main frontend (React + Plotly): `dashboard/static/index.html`
+- Backend API server: `dashboard/backend/server.py`
 
 ## Notebook
 
@@ -34,4 +39,3 @@ The notebook includes:
 ## Deploy
 
 Use Render Blueprint with `dashboard/render.yaml` after pushing this repo to GitHub.
-
