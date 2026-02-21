@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: walmart-forecast-dashboard
+    runtime: python
+    plan: free
+    buildCommand: "echo 'No build step required'"
+    startCommand: "python backend/server.py"
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "10000"
