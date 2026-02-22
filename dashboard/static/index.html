@@ -5,11 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Walmart Sales Analytics Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="module">
-      import React, { useMemo, useState } from "https://esm.sh/react@18.3.1";
-      import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-      import Papa from "https://esm.sh/papaparse@5.4.1";
-      import {
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script>
+      const { useMemo, useState } = React;
+      const {
         ResponsiveContainer,
         LineChart,
         Line,
@@ -22,8 +28,7 @@
         BarChart,
         Bar,
         Cell,
-      } from "https://esm.sh/recharts@2.12.7";
-      import { Building2, Upload, Activity, Flame, DollarSign, TrendingUp } from "https://esm.sh/lucide-react@0.468.0";
+      } = Recharts;
 
       const FACTORS = [
         { id: "CPI", label: "CPI", color: "#2dd4bf" },
@@ -45,7 +50,7 @@
       }
 
       function pearsonCorr(x, y) {
-        if (!x?.length || x.length !== y.length) return 0;
+        if (!x || !x.length || x.length !== y.length) return 0;
         const n = x.length;
         const meanX = x.reduce((a, b) => a + b, 0) / n;
         const meanY = y.reduce((a, b) => a + b, 0) / n;
@@ -188,8 +193,8 @@
           [storeData]
         );
 
-        const handleFileUpload = (event) => {
-          const file = event.target.files?.[0];
+        function handleFileUpload(event) {
+          const file = event.target.files && event.target.files[0];
           if (!file) return;
           Papa.parse(file, {
             header: true,
@@ -208,135 +213,245 @@
               setMessage("Failed to parse CSV. Please upload a valid walmart sales CSV file.");
             },
           });
-        };
+        }
 
-        const selectedColor = FACTORS.find((f) => f.id === selectedFactor)?.color || "#2dd4bf";
+        const selectedColor = (FACTORS.find((f) => f.id === selectedFactor) || {}).color || "#2dd4bf";
 
-        return (
-          React.createElement("div", {
+        return React.createElement(
+          "div",
+          {
             className: "min-h-screen text-slate-100",
             style: {
               background:
                 "radial-gradient(1000px 500px at 5% -10%, rgba(45,212,191,0.2), transparent 60%), radial-gradient(1200px 650px at 100% 110%, rgba(245,158,11,0.2), transparent 65%), linear-gradient(135deg, #05242f 0%, #0d1222 58%, #111827 100%)",
             },
           },
-            React.createElement("div", { className: "max-w-[1500px] mx-auto p-4 md:p-6 lg:p-8" },
-              React.createElement("header", { className: "flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5" },
-                React.createElement("div", null,
-                  React.createElement("h1", { className: "text-2xl md:text-4xl font-bold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
-                  React.createElement("p", { className: "text-slate-300 mt-2 text-sm md:text-base" }, "Responsive React dashboard with CSV upload, store-level analytics, and factor correlations")
+          React.createElement(
+            "div",
+            { className: "max-w-[1500px] mx-auto p-4 md:p-6 lg:p-8" },
+            React.createElement(
+              "header",
+              { className: "flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5" },
+              React.createElement(
+                "div",
+                null,
+                React.createElement("h1", { className: "text-2xl md:text-4xl font-bold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
+                React.createElement(
+                  "p",
+                  { className: "text-slate-300 mt-2 text-sm md:text-base" },
+                  "Responsive dashboard with CSV upload, store-level analytics, and factor correlations"
+                )
+              ),
+              React.createElement(
+                "div",
+                { className: "text-xs md:text-sm px-3 py-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10" },
+                `Stores available: ${stores.length || 0}`
+              )
+            ),
+
+            React.createElement(
+              "section",
+              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4" },
+              React.createElement(
+                "div",
+                { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
+                React.createElement("div", { className: "mb-3 text-cyan-300" }, "Upload CSV"),
+                React.createElement(
+                  "div",
+                  { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+                  React.createElement(
+                    "label",
+                    { className: "text-sm" },
+                    React.createElement("span", { className: "text-slate-300" }, "Select walmart_sales.csv"),
+                    React.createElement("input", {
+                      type: "file",
+                      accept: ".csv,text/csv",
+                      className:
+                        "w-full mt-1 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-cyan-400",
+                      onChange: handleFileUpload,
+                    })
+                  ),
+                  React.createElement(
+                    "div",
+                    { className: "text-xs md:text-sm rounded-lg border border-white/15 bg-slate-900/30 p-3 text-slate-200" },
+                    "Required columns: Store, Date, Weekly_Sales, Holiday_Flag, Temperature, Fuel_Price, CPI, Unemployment"
+                  )
                 ),
-                React.createElement("div", { className: "text-xs md:text-sm px-3 py-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10" }, `Stores available: ${stores.length || 0}`)
+                React.createElement("p", { className: "text-xs md:text-sm text-slate-300 mt-2" }, message)
               ),
 
-              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4" },
-                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
-                  React.createElement("div", { className: "flex items-center gap-2 mb-3 text-cyan-300" }, React.createElement(Upload, { size: 16 }), "Upload CSV"),
-                  React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-                    React.createElement("label", { className: "text-sm" },
-                      React.createElement("span", { className: "text-slate-300" }, "Select walmart_sales.csv"),
-                      React.createElement("input", {
-                        type: "file",
-                        accept: ".csv,text/csv",
-                        className: "w-full mt-1 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-cyan-400",
-                        onChange: handleFileUpload,
-                      })
-                    ),
-                    React.createElement("div", { className: "text-xs md:text-sm rounded-lg border border-white/15 bg-slate-900/30 p-3 text-slate-200" },
-                      "Required columns: Store, Date, Weekly_Sales, Holiday_Flag, Temperature, Fuel_Price, CPI, Unemployment"
-                    )
+              React.createElement(
+                "div",
+                { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
+                React.createElement("div", { className: "mb-3 text-amber-300" }, "Store Selector"),
+                React.createElement(
+                  "div",
+                  { className: "grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-44 overflow-auto pr-1" },
+                  React.createElement(
+                    "button",
+                    {
+                      className: `text-xs rounded-md px-2 py-1 border transition ${
+                        selectedStore === "all" ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"
+                      }`,
+                      onClick: () => setSelectedStore("all"),
+                    },
+                    "All"
                   ),
-                  React.createElement("p", { className: "text-xs md:text-sm text-slate-300 mt-2" }, message)
-                ),
-
-                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
-                  React.createElement("div", { className: "flex items-center gap-2 mb-3 text-amber-300" }, React.createElement(Building2, { size: 16 }), "Store Selector"),
-                  React.createElement("div", { className: "grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-44 overflow-auto pr-1" },
+                  ...stores.map((s) =>
                     React.createElement(
                       "button",
                       {
-                        className: `text-xs rounded-md px-2 py-1 border transition ${selectedStore === "all" ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"}`,
-                        onClick: () => setSelectedStore("all"),
+                        key: s,
+                        className: `text-xs rounded-md px-2 py-1 border transition ${
+                          String(s) === String(selectedStore)
+                            ? "bg-cyan-500 text-white border-cyan-300"
+                            : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"
+                        }`,
+                        onClick: () => setSelectedStore(String(s)),
                       },
-                      "All"
-                    ),
-                    ...stores.map((s) =>
-                      React.createElement(
-                        "button",
-                        {
-                          key: s,
-                          className: `text-xs rounded-md px-2 py-1 border transition ${String(s) === String(selectedStore) ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"}`,
-                          onClick: () => setSelectedStore(String(s)),
-                        },
-                        `S${s}`
-                      )
-                    )
-                  ),
-                  React.createElement("label", { className: "block mt-4 text-sm text-slate-300" }, "Recent Weeks"),
-                  React.createElement("input", {
-                    type: "range",
-                    min: 52,
-                    max: 260,
-                    value: rowsLimit,
-                    onChange: (e) => setRowsLimit(Number(e.target.value)),
-                    className: "w-full mt-1",
-                  }),
-                  React.createElement("div", { className: "text-xs text-slate-300 mt-1" }, `${rowsLimit} weeks`)
-                )
-              ),
-
-              React.createElement("section", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
-                [
-                  { label: "Avg Weekly Sales", value: fmtCurrency(stats.avg), icon: DollarSign, tint: "from-cyan-500/25 to-cyan-900/20" },
-                  { label: "Peak Sales", value: fmtCurrency(stats.peak), icon: TrendingUp, tint: "from-amber-500/30 to-amber-900/20" },
-                  { label: "Holiday Avg", value: fmtCurrency(stats.holidayAvg), icon: Flame, tint: "from-rose-500/25 to-rose-900/20" },
-                  { label: "Holiday Count", value: String(stats.holidayCount), icon: Activity, tint: "from-indigo-500/25 to-indigo-900/20" },
-                ].map((card) =>
-                  React.createElement("div", { key: card.label, className: `rounded-2xl border border-white/15 p-4 bg-gradient-to-br ${card.tint}` },
-                    React.createElement("div", { className: "flex items-center justify-between" },
-                      React.createElement("span", { className: "text-sm text-slate-200" }, card.label),
-                      React.createElement(card.icon, { size: 16 })
-                    ),
-                    React.createElement("div", { className: "text-2xl font-semibold mt-2" }, card.value)
-                  )
-                )
-              ),
-
-              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
-                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Weekly Sales Trend"),
-                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
-                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                      React.createElement(LineChart, { data: trendRows },
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                        React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                        React.createElement(YAxis, { tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                        React.createElement(Tooltip, {
-                          formatter: (v) => fmtCurrency(v),
-                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                        }),
-                        React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#2dd4bf", dot: false, strokeWidth: 2.4 })
-                      )
+                      `S${s}`
                     )
                   )
                 ),
+                React.createElement("label", { className: "block mt-4 text-sm text-slate-300" }, "Recent Weeks"),
+                React.createElement("input", {
+                  type: "range",
+                  min: 52,
+                  max: 260,
+                  value: rowsLimit,
+                  onChange: (e) => setRowsLimit(Number(e.target.value)),
+                  className: "w-full mt-1",
+                }),
+                React.createElement("div", { className: "text-xs text-slate-300 mt-1" }, `${rowsLimit} weeks`)
+              )
+            ),
 
-                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Factor Correlations"),
-                  React.createElement("div", { className: "space-y-3" },
-                    ...correlations.map((c) =>
-                      React.createElement("div", { key: c.id, className: "rounded-xl border border-white/15 bg-slate-900/30 p-3" },
-                        React.createElement("div", { className: "flex items-center justify-between text-sm" },
-                          React.createElement("span", null, c.label),
-                          React.createElement("span", { className: "font-semibold" }, `${fmtNum(c.corr, 3)} (${corrLabel(c.corr)})`)
-                        ),
-                        React.createElement("div", { className: "h-2 rounded-full bg-black/30 mt-2 overflow-hidden" },
-                          React.createElement("div", {
-                            className: "h-full",
-                            style: {
-                              width: `${Math.min(100, Math.abs(c.corr) * 100)}%`,
-                              backgroundColor: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
-                            },
+            React.createElement(
+              "section",
+              { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
+              [
+                { label: "Avg Weekly Sales", value: fmtCurrency(stats.avg), tint: "from-cyan-500/25 to-cyan-900/20" },
+                { label: "Peak Sales", value: fmtCurrency(stats.peak), tint: "from-amber-500/30 to-amber-900/20" },
+                { label: "Holiday Avg", value: fmtCurrency(stats.holidayAvg), tint: "from-rose-500/25 to-rose-900/20" },
+                { label: "Holiday Count", value: String(stats.holidayCount), tint: "from-indigo-500/25 to-indigo-900/20" },
+              ].map((card) =>
+                React.createElement(
+                  "div",
+                  { key: card.label, className: `rounded-2xl border border-white/15 p-4 bg-gradient-to-br ${card.tint}` },
+                  React.createElement("span", { className: "text-sm text-slate-200" }, card.label),
+                  React.createElement("div", { className: "text-2xl font-semibold mt-2" }, card.value)
+                )
+              )
+            ),
+
+            React.createElement(
+              "section",
+              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
+              React.createElement(
+                "div",
+                { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Weekly Sales Trend"),
+                React.createElement(
+                  "div",
+                  { className: "h-[320px] md:h-[360px]" },
+                  React.createElement(
+                    ResponsiveContainer,
+                    { width: "100%", height: "100%" },
+                    React.createElement(
+                      LineChart,
+                      { data: trendRows },
+                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                      React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(YAxis, { tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(Tooltip, {
+                        formatter: (v) => fmtCurrency(v),
+                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
+                      }),
+                      React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#2dd4bf", dot: false, strokeWidth: 2.4 })
+                    )
+                  )
+                )
+              ),
+
+              React.createElement(
+                "div",
+                { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Factor Correlations"),
+                React.createElement(
+                  "div",
+                  { className: "space-y-3" },
+                  ...correlations.map((c) =>
+                    React.createElement(
+                      "div",
+                      { key: c.id, className: "rounded-xl border border-white/15 bg-slate-900/30 p-3" },
+                      React.createElement(
+                        "div",
+                        { className: "flex items-center justify-between text-sm" },
+                        React.createElement("span", null, c.label),
+                        React.createElement("span", { className: "font-semibold" }, `${fmtNum(c.corr, 3)} (${corrLabel(c.corr)})`)
+                      ),
+                      React.createElement(
+                        "div",
+                        { className: "h-2 rounded-full bg-black/30 mt-2 overflow-hidden" },
+                        React.createElement("div", {
+                          className: "h-full",
+                          style: {
+                            width: `${Math.min(100, Math.abs(c.corr) * 100)}%`,
+                            backgroundColor: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
+                          },
+                        })
+                      )
+                    )
+                  )
+                )
+              )
+            ),
+
+            React.createElement(
+              "section",
+              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4 pb-6" },
+              React.createElement(
+                "div",
+                { className: "xl:col-span-7 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                React.createElement(
+                  "div",
+                  { className: "flex items-center justify-between gap-3 mb-3" },
+                  React.createElement("h2", { className: "text-lg font-semibold" }, "Scatter Analysis"),
+                  React.createElement(
+                    "select",
+                    {
+                      value: selectedFactor,
+                      onChange: (e) => setSelectedFactor(e.target.value),
+                      className: "bg-slate-900/50 border border-white/20 rounded-md px-3 py-1 text-sm",
+                    },
+                    ...FACTORS.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.label))
+                  )
+                ),
+                React.createElement(
+                  "div",
+                  { className: "h-[320px] md:h-[360px]" },
+                  React.createElement(
+                    ResponsiveContainer,
+                    { width: "100%", height: "100%" },
+                    React.createElement(
+                      ScatterChart,
+                      null,
+                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                      React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(YAxis, { type: "number", dataKey: "y", name: "Weekly Sales", tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(Tooltip, {
+                        cursor: { strokeDasharray: "3 3" },
+                        formatter: (v, n) => (n === "y" ? fmtCurrency(v) : fmtNum(v, 2)),
+                        labelFormatter: (_, payload) => (payload && payload[0] && payload[0].payload ? payload[0].payload.date : ""),
+                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
+                      }),
+                      React.createElement(
+                        Scatter,
+                        { data: scatterData, fill: selectedColor },
+                        ...scatterData.map((p, idx) =>
+                          React.createElement(Cell, {
+                            key: idx,
+                            fill: p.holiday ? "#f59e0b" : selectedColor,
                           })
                         )
                       )
@@ -345,64 +460,30 @@
                 )
               ),
 
-              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4 pb-6" },
-                React.createElement("div", { className: "xl:col-span-7 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                  React.createElement("div", { className: "flex items-center justify-between gap-3 mb-3" },
-                    React.createElement("h2", { className: "text-lg font-semibold" }, "Scatter Analysis"),
-                    React.createElement("select", {
-                      value: selectedFactor,
-                      onChange: (e) => setSelectedFactor(e.target.value),
-                      className: "bg-slate-900/50 border border-white/20 rounded-md px-3 py-1 text-sm",
-                    }, ...FACTORS.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.label)))
-                  ),
-                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
-                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                      React.createElement(ScatterChart, null,
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                        React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                        React.createElement(YAxis, { type: "number", dataKey: "y", name: "Weekly Sales", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                        React.createElement(Tooltip, {
-                          cursor: { strokeDasharray: "3 3" },
-                          formatter: (v, n) => (n === "y" ? fmtCurrency(v) : fmtNum(v, 2)),
-                          labelFormatter: (_, payload) => payload?.[0]?.payload?.date || "",
-                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                        }),
-                        React.createElement(Scatter, { data: scatterData, fill: selectedColor },
-                          ...scatterData.map((p, idx) =>
-                            React.createElement(Cell, {
-                              key: idx,
-                              fill: p.holiday ? "#f59e0b" : selectedColor,
-                            })
-                          )
-                        )
-                      )
-                    )
-                  )
-                ),
-
-                React.createElement("div", { className: "xl:col-span-5 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Multi-Factor Correlation Bar Chart"),
-                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
-                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                      React.createElement(BarChart, { data: correlations },
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                        React.createElement(XAxis, { dataKey: "label", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                        React.createElement(YAxis, {
-                          domain: [-1, 1],
-                          tick: { fill: "#e2e8f0", fontSize: 11 },
-                        }),
-                        React.createElement(Tooltip, {
-                          formatter: (v) => [fmtNum(v, 3), "Correlation"],
-                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                        }),
-                        React.createElement(Bar, { dataKey: "corr", radius: [8, 8, 0, 0] },
-                          ...correlations.map((c) =>
-                            React.createElement(Cell, {
-                              key: c.id,
-                              fill: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
-                            })
-                          )
-                        )
+              React.createElement(
+                "div",
+                { className: "xl:col-span-5 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Multi-Factor Correlation Bar Chart"),
+                React.createElement(
+                  "div",
+                  { className: "h-[320px] md:h-[360px]" },
+                  React.createElement(
+                    ResponsiveContainer,
+                    { width: "100%", height: "100%" },
+                    React.createElement(
+                      BarChart,
+                      { data: correlations },
+                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                      React.createElement(XAxis, { dataKey: "label", tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(YAxis, { domain: [-1, 1], tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                      React.createElement(Tooltip, {
+                        formatter: (v) => [fmtNum(v, 3), "Correlation"],
+                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
+                      }),
+                      React.createElement(
+                        Bar,
+                        { dataKey: "corr", radius: [8, 8, 0, 0] },
+                        ...correlations.map((c) => React.createElement(Cell, { key: c.id, fill: c.corr >= 0 ? "#2dd4bf" : "#f59e0b" }))
                       )
                     )
                   )
@@ -413,10 +494,7 @@
         );
       }
 
-      createRoot(document.getElementById("root")).render(React.createElement(App));
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
     </script>
-  </head>
-  <body>
-    <div id="root"></div>
   </body>
 </html>
