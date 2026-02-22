@@ -155,6 +155,15 @@ def _pearson(xs: list[float], ys: list[float]) -> float:
     return num / den
 
 
+def _std(values: list[float]) -> float:
+    n = len(values)
+    if n < 2:
+        return 0.0
+    m = sum(values) / n
+    var = sum((v - m) ** 2 for v in values) / (n - 1)
+    return math.sqrt(max(var, 0.0))
+
+
 RAW_ROWS = _load_csv_data()
 MODEL_ROWS = _predict_series(RAW_ROWS)
 
@@ -242,6 +251,42 @@ def correlations(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
         x = [float(r[f]) for r in rows]
         out.append({"feature": f, "corr": round(_pearson(x, y), 4)})
     return out
+
+
+@app.get("/api/coefficients")
+def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
+    rows = _filtered_rows(store, weeks)
+    y = [float(r["Weekly_Sales"]) for r in rows]
+    std_y = _std(y)
+    fields = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
+    out = []
+
+    for f in fields:
+        x = [float(r[f]) for r in rows]
+        corr = _pearson(x, y)
+        std_x = _std(x)
+        beta_per_unit = 0.0 if std_x == 0 else corr * (std_y / std_x)
+        mean_x = sum(x) / len(x) if x else 0.0
+        beta_10pct = beta_per_unit * (0.1 * mean_x)
+        out.append(
+            {
+                "feature": f,
+                "corr": round(corr, 4),
+                "std_x": round(std_x, 4),
+                "std_y": round(std_y, 4),
+                "mean_x": round(mean_x, 4),
+                "beta_per_unit": round(beta_per_unit, 4),
+                "beta_10pct": round(beta_10pct, 2),
+            }
+        )
+
+    return {
+        "store": store,
+        "weeks": weeks,
+        "rows": out,
+        "target": "Weekly_Sales",
+        "note": "beta_per_unit is derived from corr * (std_y/std_x).",
+    }
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -7,24 +7,24 @@
     <style>
       :root {
         --bg: #0b1220;
-        --panel: #121a2b;
-        --muted: #99a7c2;
+        --muted: #9db0cf;
         --txt: #e6edf9;
-        --accent: #35c4a1;
-        --accent2: #6aa9ff;
+        --actual: #35c4a1;
+        --pred: #6aa9ff;
+        --sim: #ef6bd6;
         --warn: #f5b042;
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: radial-gradient(900px 500px at 10% -10%, #173c58, transparent), var(--bg);
+        background: radial-gradient(1000px 520px at 8% -10%, #1a3d5e, transparent), var(--bg);
         color: var(--txt);
       }
-      .container { max-width: 1300px; margin: 0 auto; padding: 18px; }
+      .container { max-width: 1360px; margin: 0 auto; padding: 18px; }
       .panel {
         background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-        border: 1px solid rgba(255,255,255,.1);
+        border: 1px solid rgba(255,255,255,.12);
         border-radius: 14px;
         padding: 14px;
       }
@@ -33,32 +33,39 @@
       .grid { display: grid; gap: 14px; }
       .grid-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
       .span-8 { grid-column: span 8; }
+      .span-6 { grid-column: span 6; }
       .span-4 { grid-column: span 4; }
-      .span-7 { grid-column: span 7; }
-      .span-5 { grid-column: span 5; }
-      .cards { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .cards { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .card { border-radius: 12px; padding: 12px; background: #1b2539; border: 1px solid rgba(255,255,255,.08); }
-      .k { color: var(--muted); font-size: 13px; }
-      .v { font-size: 24px; font-weight: 700; margin-top: 6px; }
+      .k { color: var(--muted); font-size: 12px; }
+      .v { font-size: 31px; font-weight: 700; margin-top: 5px; line-height: 1; }
       select, input[type="range"] { width: 100%; }
       select {
-        background: #0e1729; color: var(--txt); border: 1px solid rgba(255,255,255,.15);
-        border-radius: 10px; padding: 8px;
+        background: #0e1729;
+        color: var(--txt);
+        border: 1px solid rgba(255,255,255,.2);
+        border-radius: 10px;
+        padding: 8px;
       }
-      .chart { width: 100%; height: 320px; background: #101a2d; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; }
-      .bars { display: grid; gap: 10px; }
+      .chart { width: 100%; height: 340px; background: #101a2d; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; }
+      .legend { font-size: 12px; color: var(--muted); margin-top: 6px; }
+      .sliderGrid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+      .mini { font-size: 12px; color: var(--muted); }
+      .coefTable { width:100%; border-collapse: collapse; font-size:12px; margin-top: 8px; }
+      .coefTable th, .coefTable td { padding: 6px; border-top: 1px solid rgba(255,255,255,.09); text-align: right; }
+      .coefTable th:first-child, .coefTable td:first-child { text-align: left; }
+      .bars { display: grid; gap: 8px; }
       .bar { background: #0f1a2e; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 8px; }
-      .bar-track { margin-top: 7px; height: 9px; border-radius: 99px; background: #243146; overflow: hidden; }
+      .bar-track { margin-top: 6px; height: 8px; border-radius: 99px; background: #243146; overflow: hidden; }
       .bar-fill { height: 100%; }
-      .legend { font-size: 12px; color: var(--muted); }
       .row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-      @media (max-width: 1100px) {
-        .span-8, .span-4, .span-7, .span-5 { grid-column: span 12; }
+      @media (max-width: 1180px) {
+        .span-8, .span-6, .span-4 { grid-column: span 12; }
         .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
-      @media (max-width: 640px) {
+      @media (max-width: 700px) {
         .head { grid-template-columns: 1fr; }
-        .row { grid-template-columns: 1fr; }
+        .row, .sliderGrid { grid-template-columns: 1fr; }
         .cards { grid-template-columns: 1fr; }
       }
     </style>
@@ -68,9 +75,9 @@
       <div class="head">
         <div>
           <h1 style="margin:0 0 8px 0;">Walmart Forecast Dashboard</h1>
-          <div class="sub">FastAPI backend + ML model + responsive frontend</div>
+          <div class="sub">Detailed trend + coefficient simulation + responsive scatter analysis</div>
         </div>
-        <div class="panel" style="padding:10px 12px;">Live data + predictions</div>
+        <div class="panel" style="padding:10px 12px;">Interactive What-If Engine</div>
       </div>
 
       <div class="grid grid-12" style="margin-top:14px;">
@@ -94,7 +101,7 @@
             <option value="Fuel_Price">Fuel Price</option>
             <option value="Temperature">Temperature</option>
           </select>
-          <div id="status" class="sub" style="margin-top:9px;">Loading...</div>
+          <div id="status" class="sub" style="margin-top:8px;">Loading...</div>
         </div>
       </div>
 
@@ -103,146 +110,233 @@
         <div class="card"><div class="k">Peak Sales</div><div id="peak" class="v">-</div></div>
         <div class="card"><div class="k">Holiday Avg</div><div id="havg" class="v">-</div></div>
         <div class="card"><div class="k">Holiday Count</div><div id="hcount" class="v">-</div></div>
+        <div class="card"><div class="k">Simulated Avg Sales</div><div id="savg" class="v">-</div></div>
       </div>
 
       <div class="grid grid-12" style="margin-top:14px;">
         <div class="panel span-8">
-          <div style="margin-bottom:8px;">Weekly Sales vs Prediction</div>
-          <svg id="trend" class="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
-          <div class="legend">Green: Actual, Blue: Predicted</div>
+          <div style="margin-bottom:8px;">Weekly Sales vs Baseline Prediction vs Simulated Prediction</div>
+          <svg id="trend" class="chart" viewBox="0 0 900 340" preserveAspectRatio="none"></svg>
+          <div class="legend">Green: Actual | Blue: Baseline model | Pink: Simulated (after factor changes)</div>
         </div>
+
         <div class="panel span-4">
-          <div style="margin-bottom:8px;">Feature Correlations</div>
-          <div id="corrBars" class="bars"></div>
+          <div style="margin-bottom:8px;">What-If Factor Controls (% Change)</div>
+          <div class="sliderGrid">
+            <div>
+              <label class="mini">CPI: <span id="adj_CPI">0%</span></label>
+              <input id="slider_CPI" type="range" min="-30" max="30" value="0" />
+            </div>
+            <div>
+              <label class="mini">Unemployment: <span id="adj_Unemployment">0%</span></label>
+              <input id="slider_Unemployment" type="range" min="-30" max="30" value="0" />
+            </div>
+            <div>
+              <label class="mini">Fuel Price: <span id="adj_Fuel_Price">0%</span></label>
+              <input id="slider_Fuel_Price" type="range" min="-30" max="30" value="0" />
+            </div>
+            <div>
+              <label class="mini">Temperature: <span id="adj_Temperature">0%</span></label>
+              <input id="slider_Temperature" type="range" min="-30" max="30" value="0" />
+            </div>
+          </div>
+          <div id="impactSummary" class="sub" style="margin-top:8px;">No adjustments applied.</div>
         </div>
       </div>
 
-      <div class="grid grid-12" style="margin-top:14px; margin-bottom:20px;">
-        <div class="panel span-7">
-          <div style="margin-bottom:8px;">Scatter: Factor vs Sales</div>
-          <svg id="scatter" class="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
-          <div class="legend">Orange dots are holiday weeks</div>
+      <div class="grid grid-12" style="margin-top:14px; margin-bottom:18px;">
+        <div class="panel span-6">
+          <div style="margin-bottom:8px;">Scatter: Adjusted Factor vs Simulated Sales (with regression)</div>
+          <svg id="scatter" class="chart" viewBox="0 0 900 340" preserveAspectRatio="none"></svg>
+          <div class="legend">Orange: Holiday weeks | White line: Regression trend under current simulation</div>
         </div>
-        <div class="panel span-5">
-          <div style="margin-bottom:8px;">Last 12 Rows</div>
-          <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
-            <table style="width:100%; border-collapse: collapse; font-size:12px;">
-              <thead>
-                <tr style="background:#142036; position:sticky; top:0;">
-                  <th style="text-align:left; padding:8px;">Date</th>
-                  <th style="text-align:right; padding:8px;">Actual</th>
-                  <th style="text-align:right; padding:8px;">Pred</th>
-                </tr>
-              </thead>
-              <tbody id="rows"></tbody>
-            </table>
-          </div>
+
+        <div class="panel span-6">
+          <div style="margin-bottom:8px;">Correlations + Coefficients</div>
+          <div id="corrBars" class="bars"></div>
+          <table class="coefTable">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Corr</th>
+                <th>Beta / unit</th>
+                <th>Impact at +10%</th>
+              </tr>
+            </thead>
+            <tbody id="coefRows"></tbody>
+          </table>
         </div>
       </div>
     </div>
 
     <script>
-      const state = { stores: [], store: "all", weeks: 160, factor: "CPI", rows: [], corr: [] };
+      const FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"];
+      const state = {
+        store: "all",
+        weeks: 160,
+        factor: "CPI",
+        rows: [],
+        corr: [],
+        coef: [],
+        adjustments: { CPI: 0, Unemployment: 0, Fuel_Price: 0, Temperature: 0 },
+      };
 
       const fmtMoney = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n || 0));
+      const api = (path) => fetch(path).then((r) => { if (!r.ok) throw new Error(path + " failed"); return r.json(); });
 
-      const api = (path) => fetch(path).then((r) => {
-        if (!r.ok) throw new Error(path + " failed");
-        return r.json();
-      });
+      function pearson(xs, ys) {
+        const n = Math.min(xs.length, ys.length);
+        if (n < 2) return 0;
+        const mx = xs.slice(0, n).reduce((a, b) => a + b, 0) / n;
+        const my = ys.slice(0, n).reduce((a, b) => a + b, 0) / n;
+        let num = 0, dx = 0, dy = 0;
+        for (let i = 0; i < n; i += 1) {
+          const xv = xs[i] - mx;
+          const yv = ys[i] - my;
+          num += xv * yv;
+          dx += xv * xv;
+          dy += yv * yv;
+        }
+        const den = Math.sqrt(dx * dy);
+        return den === 0 ? 0 : num / den;
+      }
 
       function buildStoreOptions(stores) {
         const sel = document.getElementById("store");
         sel.innerHTML = `<option value="all">All Stores</option>` + stores.map((s) => `<option value="${s.Store}">Store ${s.Store}</option>`).join("");
       }
 
-      function drawLine(svgId, rows) {
-        const svg = document.getElementById(svgId);
-        const w = 900;
-        const h = 320;
-        const pad = 28;
-        if (!rows.length) { svg.innerHTML = ""; return; }
+      function adjustedRows() {
+        const beta = Object.fromEntries(state.coef.map((c) => [c.feature, Number(c.beta_per_unit || 0)]));
+        return state.rows.map((r) => {
+          let deltaSales = 0;
+          const xAdj = {};
+          for (const f of FEATURES) {
+            const base = Number(r[f]);
+            const pct = Number(state.adjustments[f] || 0) / 100;
+            const newVal = base * (1 + pct);
+            xAdj[f] = newVal;
+            deltaSales += (newVal - base) * (beta[f] || 0);
+          }
+          return {
+            ...r,
+            Adjusted_Factor: xAdj[state.factor],
+            Simulated_Sales: Math.max(1000, Number(r.Predicted_Sales) + deltaSales),
+          };
+        });
+      }
 
-        const ys = rows.flatMap((r) => [r.Weekly_Sales, r.Predicted_Sales]);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
+      function drawAxesGrid(svg, w, h, pad, yTicks = 5) {
+        const lines = [];
+        for (let i = 0; i <= yTicks; i += 1) {
+          const y = pad + ((h - pad * 2) * i) / yTicks;
+          lines.push(`<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="rgba(255,255,255,.08)"/>`);
+        }
+        return lines.join("");
+      }
+
+      function drawLine(rowsBase, rowsSim) {
+        const svg = document.getElementById("trend");
+        const w = 900, h = 340, pad = 34;
+        if (!rowsBase.length) { svg.innerHTML = ""; return; }
+
+        const ys = rowsBase.flatMap((r, i) => [Number(r.Weekly_Sales), Number(r.Predicted_Sales), Number(rowsSim[i].Simulated_Sales)]);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
         const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
-        const xScale = (_, i) => pad + (i / Math.max(1, rows.length - 1)) * (w - pad * 2);
+        const xScale = (_, i) => pad + (i / Math.max(1, rowsBase.length - 1)) * (w - pad * 2);
 
-        const actual = rows.map((r, i) => `${xScale(r, i)},${yScale(r.Weekly_Sales)}`).join(" ");
-        const pred = rows.map((r, i) => `${xScale(r, i)},${yScale(r.Predicted_Sales)}`).join(" ");
+        const pActual = rowsBase.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Weekly_Sales))}`).join(" ");
+        const pPred = rowsBase.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Predicted_Sales))}`).join(" ");
+        const pSim = rowsSim.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Simulated_Sales))}`).join(" ");
 
         svg.innerHTML = `
           <rect x="0" y="0" width="${w}" height="${h}" fill="#101a2d" />
-          <polyline fill="none" stroke="#35c4a1" stroke-width="2.2" points="${actual}" />
-          <polyline fill="none" stroke="#6aa9ff" stroke-width="2" points="${pred}" />
+          ${drawAxesGrid(svg, w, h, pad, 6)}
+          <polyline fill="none" stroke="var(--actual)" stroke-width="2.2" points="${pActual}" />
+          <polyline fill="none" stroke="var(--pred)" stroke-width="2" points="${pPred}" />
+          <polyline fill="none" stroke="var(--sim)" stroke-width="2" stroke-dasharray="5 4" points="${pSim}" />
         `;
       }
 
-      function drawScatter(rows, factor) {
+      function drawScatter(rowsSim) {
         const svg = document.getElementById("scatter");
-        const w = 900;
-        const h = 320;
-        const pad = 28;
-        if (!rows.length) { svg.innerHTML = ""; return; }
+        const w = 900, h = 340, pad = 34;
+        if (!rowsSim.length) { svg.innerHTML = ""; return; }
 
-        const xs = rows.map((r) => Number(r[factor]));
-        const ys = rows.map((r) => Number(r.Weekly_Sales));
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
-
+        const xs = rowsSim.map((r) => Number(r.Adjusted_Factor));
+        const ys = rowsSim.map((r) => Number(r.Simulated_Sales));
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
         const xScale = (v) => pad + ((v - minX) / Math.max(1, maxX - minX)) * (w - pad * 2);
         const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
 
+        const mx = xs.reduce((a,b)=>a+b,0)/xs.length;
+        const my = ys.reduce((a,b)=>a+b,0)/ys.length;
+        let num=0, den=0;
+        for (let i=0;i<xs.length;i+=1){ num += (xs[i]-mx)*(ys[i]-my); den += (xs[i]-mx)*(xs[i]-mx);} 
+        const slope = den === 0 ? 0 : num/den;
+        const intercept = my - slope*mx;
+        const y1 = slope*minX + intercept;
+        const y2 = slope*maxX + intercept;
+
         svg.innerHTML =
           `<rect x="0" y="0" width="${w}" height="${h}" fill="#101a2d" />` +
-          rows
-            .map((r) => {
-              const color = Number(r.Holiday_Flag) === 1 ? "#f5b042" : "#35c4a1";
-              return `<circle cx="${xScale(Number(r[factor]))}" cy="${yScale(Number(r.Weekly_Sales))}" r="3" fill="${color}" />`;
-            })
-            .join("");
+          drawAxesGrid(svg, w, h, pad, 6) +
+          rowsSim.map((r) => {
+            const color = Number(r.Holiday_Flag) === 1 ? "var(--warn)" : "var(--actual)";
+            return `<circle cx="${xScale(Number(r.Adjusted_Factor))}" cy="${yScale(Number(r.Simulated_Sales))}" r="3" fill="${color}" />`;
+          }).join("") +
+          `<line x1="${xScale(minX)}" y1="${yScale(y1)}" x2="${xScale(maxX)}" y2="${yScale(y2)}" stroke="#ffffff" stroke-width="1.6" />`;
       }
 
       function renderCorrBars(corr) {
         const el = document.getElementById("corrBars");
-        el.innerHTML = corr
-          .map((c) => {
-            const pct = Math.min(100, Math.abs(c.corr) * 100);
-            const color = c.corr >= 0 ? "#35c4a1" : "#f5b042";
-            return `
-              <div class="bar">
-                <div style="display:flex; justify-content:space-between;"><span>${c.feature}</span><span>${Number(c.corr).toFixed(3)}</span></div>
-                <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${color};"></div></div>
-              </div>
-            `;
-          })
-          .join("");
+        el.innerHTML = corr.map((c) => {
+          const pct = Math.min(100, Math.abs(c.corr) * 100);
+          const color = c.corr >= 0 ? "#35c4a1" : "#f5b042";
+          return `<div class="bar"><div style="display:flex;justify-content:space-between;"><span>${c.feature}</span><span>${Number(c.corr).toFixed(3)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div></div>`;
+        }).join("");
       }
 
-      function renderRows(rows) {
-        const tbody = document.getElementById("rows");
-        tbody.innerHTML = rows.slice(-12).reverse().map((r) => `
+      function renderCoefTable() {
+        const tbody = document.getElementById("coefRows");
+        tbody.innerHTML = state.coef.map((c) => `
           <tr>
-            <td style="padding:8px; border-top:1px solid rgba(255,255,255,.08);">${r.Date}</td>
-            <td style="padding:8px; text-align:right; border-top:1px solid rgba(255,255,255,.08);">${fmtMoney(r.Weekly_Sales)}</td>
-            <td style="padding:8px; text-align:right; border-top:1px solid rgba(255,255,255,.08);">${fmtMoney(r.Predicted_Sales)}</td>
+            <td>${c.feature}</td>
+            <td>${Number(c.corr).toFixed(3)}</td>
+            <td>${Number(c.beta_per_unit).toFixed(3)}</td>
+            <td>${fmtMoney(c.beta_10pct)}</td>
           </tr>
         `).join("");
+      }
+
+      function renderSimulation() {
+        const rowsSim = adjustedRows();
+        const simAvg = rowsSim.length ? rowsSim.reduce((a,b)=>a+Number(b.Simulated_Sales),0)/rowsSim.length : 0;
+        const baseAvg = state.rows.length ? state.rows.reduce((a,b)=>a+Number(b.Predicted_Sales),0)/state.rows.length : 0;
+        const diff = simAvg - baseAvg;
+        const corrNow = pearson(rowsSim.map(r=>Number(r.Adjusted_Factor)), rowsSim.map(r=>Number(r.Simulated_Sales)));
+
+        document.getElementById("savg").textContent = fmtMoney(simAvg);
+        document.getElementById("impactSummary").textContent = `Simulated avg change vs baseline: ${fmtMoney(diff)} | Scatter corr(${state.factor}, simulated sales): ${corrNow.toFixed(3)}`;
+
+        drawLine(state.rows, rowsSim);
+        drawScatter(rowsSim);
       }
 
       async function refresh() {
         document.getElementById("status").textContent = "Loading...";
         const q = `store=${encodeURIComponent(state.store)}&weeks=${state.weeks}`;
-        const [ov, rows, corr] = await Promise.all([
+        const [ov, rows, corr, coef] = await Promise.all([
           api(`/api/overview?${q}`),
           api(`/api/store-data?${q}`),
           api(`/api/correlations?${q}`),
+          api(`/api/coefficients?${q}`),
         ]);
+
         state.rows = rows;
         state.corr = corr;
+        state.coef = coef.rows || [];
 
         document.getElementById("avg").textContent = fmtMoney(ov.avg_weekly_sales);
         document.getElementById("peak").textContent = fmtMoney(ov.peak_sales);
@@ -250,36 +344,39 @@
         document.getElementById("hcount").textContent = String(ov.holiday_count);
         document.getElementById("status").textContent = `Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max})`;
 
-        drawLine("trend", rows);
-        drawScatter(rows, state.factor);
         renderCorrBars(corr);
-        renderRows(rows);
+        renderCoefTable();
+        renderSimulation();
       }
 
       async function init() {
         const stores = await api("/api/stores");
-        state.stores = stores;
         buildStoreOptions(stores);
 
-        const storeEl = document.getElementById("store");
-        const weeksEl = document.getElementById("weeks");
-        const factorEl = document.getElementById("factor");
-
-        storeEl.onchange = async (e) => {
+        document.getElementById("store").onchange = async (e) => {
           state.store = e.target.value;
           await refresh();
         };
 
-        weeksEl.oninput = async (e) => {
+        document.getElementById("weeks").oninput = async (e) => {
           state.weeks = Number(e.target.value);
           document.getElementById("weeksVal").textContent = String(state.weeks);
           await refresh();
         };
 
-        factorEl.onchange = (e) => {
+        document.getElementById("factor").onchange = (e) => {
           state.factor = e.target.value;
-          drawScatter(state.rows, state.factor);
+          renderSimulation();
         };
+
+        for (const f of FEATURES) {
+          const id = `slider_${f}`;
+          document.getElementById(id).oninput = (e) => {
+            state.adjustments[f] = Number(e.target.value);
+            document.getElementById(`adj_${f}`).textContent = `${state.adjustments[f]}%`;
+            renderSimulation();
+          };
+        }
 
         await refresh();
       }
