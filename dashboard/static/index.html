@@ -86,7 +86,7 @@
       }
 
       function App() {
-        const [stores, setStores] = useState([]);
+        const [stores, setStores] = useState(DEFAULT_STORES);
         const [selectedStore, setSelectedStore] = useState("all");
         const [weeks, setWeeks] = useState(143);
         const [selectedFactor, setSelectedFactor] = useState("CPI");
@@ -108,7 +108,7 @@
                 setStoreLoadError(true);
                 return;
               }
-              setStores(parsed.sort((a, b) => Number(a.Store) - Number(b.Store)));
+              setStores(DEFAULT_STORES);
               setStoreLoadError(false);
             })
             .catch(() => {
@@ -215,7 +215,7 @@
                 React.createElement("div", { className: "lg:col-span-8 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
                   React.createElement("div", { className: "flex items-center justify-between mb-3" },
                     React.createElement("h2", { className: "text-lg font-medium flex items-center gap-2" }, React.createElement(Store, { size: 18 }), "Store Selector"),
-                    React.createElement("div", { className: "text-sm text-amber-200/80" }, `${stores.length || 45} stores`)
+                    React.createElement("div", { className: "text-sm text-amber-200/80" }, "45 stores")
                   ),
                   React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
                     React.createElement("div", null,
