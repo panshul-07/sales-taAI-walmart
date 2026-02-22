@@ -146,9 +146,9 @@
 
       <div class="grid grid-12" style="margin-top:14px; margin-bottom:18px;">
         <div class="panel span-8">
-          <div style="margin-bottom:8px;">Scatter: Adjusted Factor vs Selected-Factor Delta</div>
+          <div style="margin-bottom:8px;">Scatter: Adjusted Factor vs Simulated Sales</div>
           <svg id="scatter" class="chart" viewBox="0 0 900 340" preserveAspectRatio="none"></svg>
-          <div class="legend">Orange: Holiday weeks | Y-axis is selected-factor-only delta | Yellow dashed line: best-fit trend</div>
+          <div class="legend">Orange: Holiday weeks | Y-axis is simulated sales | Yellow dashed line: best-fit trend</div>
           <div id="scatterStats" class="mini" style="margin-top:6px;">Trend stats: -</div>
         </div>
 
@@ -307,7 +307,7 @@
         if (!rowsSim.length) { svg.innerHTML = ""; return; }
 
         const xs = rowsSim.map((r) => Number(r.Adjusted_Factor));
-        const ys = rowsSim.map((r) => Number(r.Selected_Factor_Delta));
+        const ys = rowsSim.map((r) => Number(r.Simulated_Sales));
         const minX = Math.min(...xs), maxX = Math.max(...xs);
         const minYRaw = Math.min(...ys);
         const maxYRaw = Math.max(...ys);
@@ -330,7 +330,7 @@
         for (let i = 0; i <= 6; i += 1) {
           const yVal = maxY - ((maxY - minY) * i) / 6;
           const yPos = pad + ((h - pad * 2) * i) / 6;
-          yLabels.push(`<text x="${pad - 8}" y="${yPos + 4}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="end">${fmtDelta(yVal)}</text>`);
+          yLabels.push(`<text x="${pad - 8}" y="${yPos + 4}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="end">${fmtCompact(yVal)}</text>`);
         }
         const xLabels = [];
         for (let i = 0; i <= 4; i += 1) {
@@ -347,7 +347,7 @@
             : "") +
           rowsSim.map((r) => {
             const color = Number(r.Holiday_Flag) === 1 ? "var(--warn)" : "var(--actual)";
-            return `<circle cx="${xScale(Number(r.Adjusted_Factor))}" cy="${yScale(Number(r.Selected_Factor_Delta))}" r="3.2" fill="${color}" fill-opacity="0.9" />`;
+            return `<circle cx="${xScale(Number(r.Adjusted_Factor))}" cy="${yScale(Number(r.Simulated_Sales))}" r="3.2" fill="${color}" fill-opacity="0.9" />`;
           }).join("") +
           `<line x1="${xScale(minX)}" y1="${yScale(y1)}" x2="${xScale(maxX)}" y2="${yScale(y2)}" stroke="#ffd86a" stroke-width="1.8" stroke-dasharray="7 5" />` +
           yLabels.join("") +
@@ -355,8 +355,8 @@
 
         const corrNow = pearson(xs, ys);
         const r2 = corrNow * corrNow;
-        const avgDelta = ys.reduce((a, b) => a + b, 0) / ys.length;
-        document.getElementById("scatterStats").textContent = `Selected-factor impact line: delta = ${slope.toFixed(2)}x + ${intercept.toFixed(2)} | corr = ${corrNow.toFixed(3)} | R² = ${r2.toFixed(3)} | mean delta = ${fmtDelta(avgDelta)}`;
+        const avgSales = ys.reduce((a, b) => a + b, 0) / ys.length;
+        document.getElementById("scatterStats").textContent = `Trend line: sales = ${slope.toFixed(2)}x + ${intercept.toFixed(2)} | corr = ${corrNow.toFixed(3)} | R² = ${r2.toFixed(3)} | mean simulated sales = ${fmtMoney(avgSales)}`;
       }
 
       function renderCorrBars(corr) {
@@ -385,11 +385,11 @@
         const simAvg = rowsSim.length ? rowsSim.reduce((a,b)=>a+Number(b.Simulated_Sales),0)/rowsSim.length : 0;
         const baseAvg = state.rows.length ? state.rows.reduce((a,b)=>a+Number(b.Predicted_Sales),0)/state.rows.length : 0;
         const diff = simAvg - baseAvg;
-        const corrNow = pearson(rowsSim.map(r=>Number(r.Adjusted_Factor)), rowsSim.map(r=>Number(r.Selected_Factor_Delta)));
+        const corrNow = pearson(rowsSim.map(r=>Number(r.Adjusted_Factor)), rowsSim.map(r=>Number(r.Simulated_Sales)));
 
         document.getElementById("savg").textContent = fmtMoney(simAvg);
         const pctDiff = (diff / Math.max(1, baseAvg)) * 100;
-        document.getElementById("impactSummary").textContent = `Simulated avg change vs baseline: ${fmtMoney(diff)} (${pctDiff.toFixed(2)}%) | corr(${state.factor}, selected-factor delta): ${corrNow.toFixed(3)}`;
+        document.getElementById("impactSummary").textContent = `Simulated avg change vs baseline: ${fmtMoney(diff)} (${pctDiff.toFixed(2)}%) | corr(${state.factor}, simulated sales): ${corrNow.toFixed(3)}`;
 
         drawLine(state.rows, rowsSim);
         drawScatter(rowsSim);
