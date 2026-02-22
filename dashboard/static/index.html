@@ -92,6 +92,7 @@
         const [selectedFactor, setSelectedFactor] = useState("CPI");
         const [storeData, setStoreData] = useState([]);
         const [overview, setOverview] = useState(null);
+        const [coeffSummary, setCoeffSummary] = useState(null);
         const [storeLoadError, setStoreLoadError] = useState(false);
 
         useEffect(() => {
@@ -132,6 +133,14 @@
             })
             .then(setOverview)
             .catch(() => setOverview(null));
+
+          apiFetch(`/api/coefficients?store=${selectedStore}`)
+            .then((r) => {
+              if (!r.ok) throw new Error(`Coefficient fetch failed (${r.status})`);
+              return r.json();
+            })
+            .then(setCoeffSummary)
+            .catch(() => setCoeffSummary(null));
         }, [selectedStore, weeks]);
 
         const stats = useMemo(() => {
@@ -347,22 +356,38 @@
                 ),
 
                 React.createElement("div", { className: "xl:col-span-6 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Multi-Factor Correlation Comparison"),
+                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Coefficient Sensitivity (Parametric OLS)"),
                   React.createElement("div", { className: "h-[340px]" },
-                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                      React.createElement(BarChart, { data: correlations },
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
-                        React.createElement(XAxis, { dataKey: "name", tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                        React.createElement(YAxis, { domain: [-1, 1], tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                        React.createElement(Tooltip, {
-                          formatter: (v) => fmtNum(v, 3),
-                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
-                        }),
-                        React.createElement(Bar, { dataKey: "corr", radius: [8, 8, 0, 0] },
-                          ...correlations.map((c) => React.createElement(Cell, { key: c.id, fill: c.corr >= 0 ? "#17b6a8" : "#d0ae62" }))
+                    coeffSummary && coeffSummary.rows && coeffSummary.rows.length
+                      ? React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                          React.createElement(BarChart, { data: coeffSummary.rows },
+                            React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
+                            React.createElement(XAxis, { dataKey: "feature", tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                            React.createElement(YAxis, { tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                            React.createElement(Tooltip, {
+                              formatter: (v, name, item) => {
+                                if (name === "coef") return [fmtNum(v, 4), "Coefficient"];
+                                return [v, name];
+                              },
+                              labelFormatter: (_, payload) => {
+                                const row = payload?.[0]?.payload;
+                                if (!row) return "";
+                                return `${row.feature} | p=${fmtNum(row.p_value, 5)} | t=${fmtNum(row.t_stat, 3)}`;
+                              },
+                              contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                            }),
+                            React.createElement(Bar, { dataKey: "coef", radius: [8, 8, 0, 0] },
+                              ...coeffSummary.rows.map((c) => React.createElement(Cell, { key: c.feature, fill: c.coef >= 0 ? "#17b6a8" : "#d0ae62" }))
+                            )
+                          )
                         )
-                      )
-                    )
+                        : React.createElement("div", { className: "h-full flex items-center justify-center text-amber-100/80" }, "Coefficient model unavailable")
+                  )
+                  ,
+                  React.createElement("div", { className: "text-xs text-amber-200/75 mt-2" },
+                    coeffSummary
+                      ? `Target: ${coeffSummary.target}, Scope: ${coeffSummary.scope}, R²: ${fmtNum(coeffSummary.model_r2, 4)}`
+                      : "Sensitivity is based on standardized OLS coefficients for CPI, Unemployment, Fuel Price, and Temperature."
                   )
                 )
               )

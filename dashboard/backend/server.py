@@ -1,5 +1,6 @@
 import json
 import os
+from functools import lru_cache
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -7,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 import pandas as pd
+import statsmodels.formula.api as smf
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.impute import SimpleImputer
@@ -123,6 +125,62 @@ def prepare_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Pipelin
 
 
 RAW_DF, MODEL_DF, TEST_DF, MODEL_PIPELINE, METRICS = prepare_dataset()
+CORE_SENSITIVITY_FEATURES = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature']
+
+
+@lru_cache(maxsize=64)
+def get_parametric_coefficients(store_key: str) -> dict:
+    """Return robust OLS sensitivity coefficients on log-sales."""
+    if store_key == 'all':
+        df = RAW_DF.copy()
+    else:
+        sid = int(store_key)
+        df = RAW_DF[RAW_DF['Store'] == sid].copy()
+        if df.empty:
+            raise ValueError('No rows for requested store')
+
+    df['log_sales'] = np.log1p(df['Weekly_Sales'])
+
+    for col in CORE_SENSITIVITY_FEATURES:
+        std = float(df[col].std())
+        mean = float(df[col].mean())
+        if std <= 0:
+            df[f'z_{col}'] = 0.0
+        else:
+            df[f'z_{col}'] = (df[col] - mean) / std
+
+    if store_key == 'all':
+        formula = (
+            'log_sales ~ z_CPI + z_Unemployment + z_Fuel_Price + z_Temperature '
+            '+ Holiday_Flag + C(Store)'
+        )
+    else:
+        formula = 'log_sales ~ z_CPI + z_Unemployment + z_Fuel_Price + z_Temperature + Holiday_Flag'
+
+    fit = smf.ols(formula, data=df).fit(cov_type='HC3')
+    ci = fit.conf_int()
+
+    rows = []
+    for feat in CORE_SENSITIVITY_FEATURES:
+        term = f'z_{feat}'
+        rows.append({
+            'feature': feat,
+            'coef': _safe_float(fit.params.get(term, np.nan), 6),
+            'p_value': _safe_float(fit.pvalues.get(term, np.nan), 6),
+            't_stat': _safe_float(fit.tvalues.get(term, np.nan), 6),
+            'ci_low': _safe_float(ci.loc[term, 0], 6),
+            'ci_high': _safe_float(ci.loc[term, 1], 6),
+        })
+
+    rows.sort(key=lambda r: abs(r['coef']), reverse=True)
+    return {
+        'scope': 'all_stores' if store_key == 'all' else f'store_{store_key}',
+        'target': 'log1p(Weekly_Sales)',
+        'n_obs': int(len(df)),
+        'model_r2': _safe_float(fit.rsquared, 6),
+        'model_adj_r2': _safe_float(fit.rsquared_adj, 6),
+        'rows': rows,
+    }
 
 
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict | list, status: int = 200) -> None:
@@ -280,6 +338,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 'labels': cols,
                 'z': [[_safe_float(v, 4) for v in row] for row in corr.values.tolist()],
             })
+            return
+
+        if path == '/api/coefficients':
+            store_key = 'all'
+            if store != 'all':
+                try:
+                    int(store)
+                    store_key = store
+                except ValueError:
+                    _json_response(self, {'error': 'Invalid store id'}, 400)
+                    return
+            try:
+                payload = get_parametric_coefficients(store_key)
+            except Exception as exc:
+                _json_response(self, {'error': f'Coefficient model failed: {exc}'}, 500)
+                return
+            _json_response(self, payload)
             return
 
         _json_response(self, {'error': 'Not found'}, 404)
