@@ -35,6 +35,11 @@ Open: `http://127.0.0.1:8000`
 2. Create/update Render Blueprint using `dashboard/render.yaml`.
 3. Deploy web service.
 
+## Live Dashboard Link
+
+- Current live URL: `https://eb632f6bf04d57.lhr.life`
+- Note: this is a temporary tunnel link and may expire.
+
 ## Notes
 
 - If a real CSV is available, set `DATA_PATH` to use it.
