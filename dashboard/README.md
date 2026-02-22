@@ -1,36 +1,47 @@
-# Walmart Forecast Dashboard
+# Dashboard Service (FastAPI + Interactive Frontend)
 
-Interactive 45-store sales intelligence dashboard with:
-- Store-level filtering and KPI widgets
-- Live Plotly charts (actual vs predicted, feature dependence, correlation heatmap)
-- Macro-feature tracking (CPI, Unemployment, Fuel Price, Temperature)
-- Darussalam Hyderabad themed background overlay
+This folder contains the complete dashboard service.
+
+## What It Includes
+
+- API endpoints for stores, overview, timeseries rows, correlations, coefficients
+- Responsive UI with:
+  - KPI cards
+  - Actual vs baseline vs simulated trend
+  - Factor sliders for what-if analysis
+  - Scatter plot (Adjusted factor vs Simulated sales)
+  - Correlation bars + coefficient table
 
 ## Run Locally
 
 ```bash
-cd "/Users/panshulaj/Documents/sale forecasting/dashboard"
-/usr/local/bin/python3 backend/server.py
+cd /Users/panshulaj/Documents/front
+python3 -m venv .venv
+.venv/bin/pip install -r dashboard/requirements.txt
+.venv/bin/uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open: `http://localhost:8080`
+Open: `http://127.0.0.1:8000`
 
 ## API Endpoints
 
 - `GET /api/health`
 - `GET /api/stores`
 - `GET /api/overview?store=all&weeks=160`
-- `GET /api/timeseries?store=all&weeks=160`
-- `GET /api/feature-dependencies?store=all&weeks=160`
-- `GET /api/feature-series?store=all&weeks=160&feature=CPI`
-- `GET /api/correlation?store=all&weeks=160`
+- `GET /api/store-data?store=all&weeks=160`
+- `GET /api/correlations?store=all&weeks=160`
+- `GET /api/coefficients?store=all&weeks=160`
 
-## Notes
+## Data Behavior
 
-- Backend uses a tuned `ExtraTrees` model trained at server startup.
-- The logo background URL is set in `static/index.html` as `logoUrl`.
-- If you have the official Darussalam Hyderabad logo file, place it under `static/` and switch `logoUrl` to that local path.
+- If `DATA_PATH` points to a valid Walmart CSV, backend uses that.
+- Otherwise backend generates realistic demo data for 45 stores.
+- For `store=all`, data is aggregated by date for correct trend math.
 
-## Deploy (Render Blueprint)
+## Deploy on Render
 
-`render.yaml` is included. Push this folder to a Git repo, then create a Blueprint service on Render.
+`render.yaml` is configured to:
+- install dependencies from `requirements.txt`
+- start app with `uvicorn backend.server:app --host 0.0.0.0 --port $PORT`
+
+Deploy this folder as the service root (`rootDir: dashboard`).

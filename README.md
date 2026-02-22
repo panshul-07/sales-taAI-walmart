@@ -1,41 +1,41 @@
-# Walmart Sales Forecasting Dashboard
+# Walmart Sales Forecast Dashboard
 
-Interactive 45-store sales forecasting dashboard built with:
-- Python backend API (`http.server` + `pandas` + `scikit-learn`)
-- React frontend (CDN module) + Plotly visualizations
-- Tuned `ExtraTrees` forecasting model
-- Stationarity and parametric diagnostics in Jupyter notebook
+Production-ready Walmart sales dashboard with a FastAPI backend and responsive frontend.
 
-## Project Structure
+## Current Stack
 
-- `dashboard/backend/server.py`: API server + model training/inference
-- `dashboard/static/index.html`: React + Plotly dashboard UI
-- `dashboard/render.yaml`: Render deployment blueprint
-- `walmart_sales_forecasting.ipynb`: complete modeling notebook
-- `build_notebook.py`: notebook generator script
+- Backend: FastAPI + Uvicorn (`dashboard/backend/server.py`)
+- Frontend: single-page dashboard in vanilla JS/SVG (`dashboard/static/index.html`)
+- Modeling: lightweight forecasting + coefficient-based what-if simulation (pure Python)
+- Deployment: Render Blueprint (`dashboard/render.yaml`)
+
+## Repo Structure
+
+- `dashboard/backend/server.py`: API + static file serving
+- `dashboard/static/index.html`: dashboard UI and chart logic
+- `dashboard/requirements.txt`: runtime dependencies
+- `dashboard/render.yaml`: Render deploy config
+- `dashboard/README.md`: dashboard-level run/API details
+- `walmart_sales_forecasting.ipynb`: historical notebook work
 
 ## Local Run
 
 ```bash
-cd "/Users/panshulaj/Documents/sale forecasting"
-npm run frontend
+cd /Users/panshulaj/Documents/front
+python3 -m venv .venv
+.venv/bin/pip install -r dashboard/requirements.txt
+.venv/bin/uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open: `http://localhost:8080`
-
-## Frontend Code Location
-
-- Main frontend (React + Plotly): `dashboard/static/index.html`
-- Backend API server: `dashboard/backend/server.py`
-
-## Notebook
-
-The notebook includes:
-- EDA and feature engineering
-- Stationarity checks (ADF/KPSS)
-- Robust parametric demand equation
-- Ensemble ML model comparison
+Open: `http://127.0.0.1:8000`
 
 ## Deploy
 
-Use Render Blueprint with `dashboard/render.yaml` after pushing this repo to GitHub.
+1. Push to GitHub.
+2. Create/update Render Blueprint using `dashboard/render.yaml`.
+3. Deploy web service.
+
+## Notes
+
+- If a real CSV is available, set `DATA_PATH` to use it.
+- Without a CSV, the backend generates demo data automatically.
