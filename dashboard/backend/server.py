@@ -128,6 +128,9 @@ RAW_DF, MODEL_DF, TEST_DF, MODEL_PIPELINE, METRICS = prepare_dataset()
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict | list, status: int = 200) -> None:
     data = json.dumps(payload).encode('utf-8')
     handler.send_response(status)
+    handler.send_header('Access-Control-Allow-Origin', '*')
+    handler.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    handler.send_header('Access-Control-Allow-Headers', 'Content-Type')
     handler.send_header('Content-Type', 'application/json; charset=utf-8')
     handler.send_header('Content-Length', str(len(data)))
     handler.end_headers()
@@ -143,6 +146,13 @@ def _read_file_bytes(path: Path) -> bytes | None:
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args):
         return
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)

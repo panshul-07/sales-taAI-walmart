@@ -32,6 +32,12 @@
       } from "https://esm.sh/lucide-react@0.468.0";
 
       const logoUrl = "https://darussalam.in/wp-content/uploads/2020/09/logo.png";
+      const DEFAULT_STORES = Array.from({ length: 45 }, (_, i) => ({ Store: i + 1 }));
+      const API_BASE =
+        window.location.hostname === "walmart-sales-frontend.onrender.com"
+          ? "https://walmart-sales-api.onrender.com"
+          : "";
+      const apiFetch = (path) => fetch(`${API_BASE}${path}`);
 
       const factors = [
         { id: "CPI", name: "CPI", color: "#d0ae62", unit: "index" },
@@ -86,22 +92,44 @@
         const [selectedFactor, setSelectedFactor] = useState("CPI");
         const [storeData, setStoreData] = useState([]);
         const [overview, setOverview] = useState(null);
+        const [storeLoadError, setStoreLoadError] = useState(false);
 
         useEffect(() => {
-          fetch("/api/stores")
-            .then((r) => r.json())
-            .then(setStores)
-            .catch(() => setStores([]));
+          apiFetch("/api/stores")
+            .then((r) => {
+              if (!r.ok) throw new Error(`Store fetch failed (${r.status})`);
+              return r.json();
+            })
+            .then((rows) => {
+              const parsed = Array.isArray(rows) ? rows.filter((s) => Number.isFinite(Number(s.Store))) : [];
+              if (!parsed.length) {
+                setStores(DEFAULT_STORES);
+                setStoreLoadError(true);
+                return;
+              }
+              setStores(parsed.sort((a, b) => Number(a.Store) - Number(b.Store)));
+              setStoreLoadError(false);
+            })
+            .catch(() => {
+              setStores(DEFAULT_STORES);
+              setStoreLoadError(true);
+            });
         }, []);
 
         useEffect(() => {
-          fetch(`/api/store-data?store=${selectedStore}&weeks=${weeks}`)
-            .then((r) => r.json())
+          apiFetch(`/api/store-data?store=${selectedStore}&weeks=${weeks}`)
+            .then((r) => {
+              if (!r.ok) throw new Error(`Store data fetch failed (${r.status})`);
+              return r.json();
+            })
             .then(setStoreData)
             .catch(() => setStoreData([]));
 
-          fetch(`/api/overview?store=${selectedStore}&weeks=${weeks}`)
-            .then((r) => r.json())
+          apiFetch(`/api/overview?store=${selectedStore}&weeks=${weeks}`)
+            .then((r) => {
+              if (!r.ok) throw new Error(`Overview fetch failed (${r.status})`);
+              return r.json();
+            })
             .then(setOverview)
             .catch(() => setOverview(null));
         }, [selectedStore, weeks]);
@@ -180,17 +208,23 @@
                     React.createElement("h2", { className: "text-lg font-medium flex items-center gap-2" }, React.createElement(Store, { size: 18 }), "Store Selector"),
                     React.createElement("div", { className: "text-sm text-amber-200/80" }, `${stores.length || 45} stores`)
                   ),
-                  React.createElement("div", { className: "grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2" },
-                    React.createElement("button", {
-                      className: `px-2 py-2 text-sm rounded-lg border ${selectedStore === "all" ? "bg-amber-200 text-emerald-950 border-amber-100" : "bg-transparent border-amber-200/30 text-amber-100"}`,
-                      onClick: () => setSelectedStore("all"),
-                    }, "All"),
-                    ...stores.map((s) =>
-                      React.createElement("button", {
-                        key: s.Store,
-                        className: `px-2 py-2 text-sm rounded-lg border ${String(selectedStore) === String(s.Store) ? "bg-amber-200 text-emerald-950 border-amber-100" : "bg-transparent border-amber-200/30 text-amber-100"}`,
-                        onClick: () => setSelectedStore(String(s.Store)),
-                      }, `S${s.Store}`)
+                  React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+                    React.createElement("div", null,
+                      React.createElement("label", { className: "text-sm text-amber-100/80" }, "Choose Store"),
+                      React.createElement("select", {
+                        value: selectedStore,
+                        onChange: (e) => setSelectedStore(e.target.value),
+                        className: "w-full mt-1 bg-emerald-900/60 border border-amber-200/30 rounded-lg px-3 py-2",
+                      },
+                        React.createElement("option", { value: "all" }, "All Stores"),
+                        ...stores.map((s) =>
+                          React.createElement("option", { key: s.Store, value: String(s.Store) }, `Store ${s.Store}`)
+                        )
+                      )
+                    ),
+                    React.createElement("div", { className: "text-sm text-amber-200/85 rounded-lg border border-amber-200/20 bg-emerald-900/35 px-3 py-2" },
+                      selectedStore === "all" ? "Showing all 45 stores combined." : `Showing data for Store ${selectedStore}.`,
+                      storeLoadError ? " Store list is from local fallback (1-45)." : ""
                     )
                   )
                 ),
