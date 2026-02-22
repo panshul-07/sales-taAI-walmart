@@ -3,479 +3,335 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Walmart Forecast Intelligence Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <title>Walmart Sales Analytics Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
       import React, { useEffect, useMemo, useState } from "https://esm.sh/react@18.3.1";
       import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+      import {
+        ResponsiveContainer,
+        LineChart,
+        Line,
+        XAxis,
+        YAxis,
+        CartesianGrid,
+        Tooltip,
+        ScatterChart,
+        Scatter,
+        BarChart,
+        Bar,
+        Cell,
+      } from "https://esm.sh/recharts@2.12.7";
+      import {
+        Store,
+        TrendingUp,
+        Activity,
+        Flame,
+        DollarSign,
+        Gauge,
+      } from "https://esm.sh/lucide-react@0.468.0";
 
       const logoUrl = "https://darussalam.in/wp-content/uploads/2020/09/logo.png";
 
-      const css = `
-        :root {
-          --bg: #061318;
-          --panel: rgba(8, 42, 49, 0.72);
-          --panel-border: rgba(219, 191, 122, 0.34);
-          --accent: #0f8f8d;
-          --accent-2: #d0ae62;
-          --text: #f7f4ec;
-          --muted: #cfbe95;
-        }
+      const factors = [
+        { id: "CPI", name: "CPI", color: "#d0ae62", unit: "index" },
+        { id: "Unemployment", name: "Unemployment", color: "#25b6aa", unit: "%" },
+        { id: "Fuel_Price", name: "Fuel Price", color: "#c39a45", unit: "$" },
+        { id: "Temperature", name: "Temperature", color: "#13a89f", unit: "°F" },
+      ];
 
-        * { box-sizing: border-box; }
-
-        body {
-          margin: 0;
-          font-family: "Segoe UI", "Avenir Next", system-ui, sans-serif;
-          color: var(--text);
-          background:
-            radial-gradient(1200px 700px at 90% -5%, rgba(208, 174, 98, 0.25), transparent 58%),
-            radial-gradient(1100px 700px at -8% 108%, rgba(15, 143, 141, 0.35), transparent 62%),
-            linear-gradient(145deg, #041015 0%, #08232a 48%, #05141a 100%);
-          min-height: 100vh;
-        }
-
-        body::before {
-          content: "";
-          position: fixed;
-          inset: 0;
-          background-image: url('${logoUrl}');
-          background-repeat: no-repeat;
-          background-position: center;
-          background-size: min(58vw, 560px);
-          opacity: 0.11;
-          filter: saturate(1.08) contrast(1.06);
-          pointer-events: none;
-          z-index: 0;
-        }
-
-        .app {
-          position: relative;
-          z-index: 1;
-          padding: 22px;
-          max-width: 1500px;
-          margin: 0 auto;
-        }
-
-        .title-wrap {
-          display: flex;
-          justify-content: space-between;
-          align-items: end;
-          gap: 12px;
-          margin-bottom: 20px;
-        }
-
-        .title h1 {
-          margin: 0;
-          font-size: clamp(1.5rem, 2.7vw, 2.5rem);
-          letter-spacing: 0.3px;
-        }
-
-        .title p { margin: 6px 0 0; color: var(--muted); }
-
-        .chip {
-          padding: 8px 12px;
-          border-radius: 999px;
-          border: 1px solid var(--panel-border);
-          background: rgba(208, 174, 98, 0.15);
-          font-size: 0.9rem;
-          color: #f7ebcf;
-        }
-
-        .controls, .cards, .grid {
-          display: grid;
-          gap: 14px;
-        }
-
-        .controls {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          margin-bottom: 14px;
-        }
-
-        .cards {
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-          margin-bottom: 14px;
-        }
-
-        .grid {
-          grid-template-columns: repeat(12, minmax(0, 1fr));
-        }
-
-        .panel {
-          background: var(--panel);
-          border: 1px solid var(--panel-border);
-          border-radius: 16px;
-          backdrop-filter: blur(8px);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
-        }
-
-        .control {
-          padding: 12px;
-        }
-
-        .control label {
-          font-size: 0.82rem;
-          color: var(--muted);
-          display: block;
-          margin-bottom: 6px;
-          letter-spacing: 0.3px;
-        }
-
-        .control select, .control input {
-          width: 100%;
-          border: 1px solid rgba(219, 191, 122, 0.45);
-          background: rgba(5, 30, 36, 0.92);
-          color: var(--text);
-          border-radius: 10px;
-          padding: 9px;
-          outline: none;
-        }
-
-        .card {
-          padding: 14px;
-        }
-
-        .card .k {
-          font-size: 0.82rem;
-          color: var(--muted);
-          margin-bottom: 7px;
-        }
-
-        .card .v {
-          font-weight: 700;
-          font-size: clamp(1.05rem, 1.6vw, 1.45rem);
-          color: #fff9ee;
-        }
-
-        .plot-panel {
-          padding: 8px;
-        }
-
-        .span-12 { grid-column: span 12; }
-        .span-8 { grid-column: span 8; }
-        .span-6 { grid-column: span 6; }
-        .span-4 { grid-column: span 4; }
-
-        .plot {
-          width: 100%;
-          min-height: 380px;
-        }
-
-        .plot.small { min-height: 330px; }
-
-        @media (max-width: 1200px) {
-          .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-          .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .span-8, .span-6, .span-4 { grid-column: span 12; }
-        }
-
-        @media (max-width: 720px) {
-          .cards, .controls { grid-template-columns: 1fr; }
-          .app { padding: 14px; }
-        }
-      `;
-
-      function fmt(value) {
-        if (value === null || value === undefined || Number.isNaN(value)) return "-";
-        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+      function fmtCurrency(value) {
+        return new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 0,
+        }).format(value || 0);
       }
 
-      function useApi(path) {
-        const [data, setData] = useState(null);
-        const [error, setError] = useState(null);
-
-        useEffect(() => {
-          let active = true;
-          fetch(path)
-            .then((r) => r.json())
-            .then((d) => active && setData(d))
-            .catch((e) => active && setError(e.message));
-          return () => {
-            active = false;
-          };
-        }, [path]);
-
-        return { data, error };
+      function fmtNum(value, digits = 2) {
+        return Number(value || 0).toFixed(digits);
       }
 
-      function Plot({ id, data, layout, config, className = "plot" }) {
-        useEffect(() => {
-          if (!data) return;
-          Plotly.newPlot(id, data, layout, config);
-          return () => Plotly.purge(id);
-        }, [id, data, layout, config]);
+      function pearsonCorr(x, y) {
+        if (!x?.length || x.length !== y.length) return 0;
+        const n = x.length;
+        const mx = x.reduce((a, b) => a + b, 0) / n;
+        const my = y.reduce((a, b) => a + b, 0) / n;
+        let num = 0;
+        let dx = 0;
+        let dy = 0;
+        for (let i = 0; i < n; i++) {
+          const xv = x[i] - mx;
+          const yv = y[i] - my;
+          num += xv * yv;
+          dx += xv * xv;
+          dy += yv * yv;
+        }
+        const den = Math.sqrt(dx * dy);
+        return den === 0 ? 0 : num / den;
+      }
 
-        return React.createElement("div", { id, className });
+      function corrLabel(c) {
+        const v = Math.abs(c);
+        if (v > 0.7) return "Strong";
+        if (v > 0.4) return "Moderate";
+        if (v > 0.2) return "Weak";
+        return "Very Weak";
       }
 
       function App() {
-        const [store, setStore] = useState("all");
-        const [weeks, setWeeks] = useState(160);
-        const [feature, setFeature] = useState("CPI");
+        const [stores, setStores] = useState([]);
+        const [selectedStore, setSelectedStore] = useState("all");
+        const [weeks, setWeeks] = useState(143);
+        const [selectedFactor, setSelectedFactor] = useState("CPI");
+        const [storeData, setStoreData] = useState([]);
+        const [overview, setOverview] = useState(null);
 
-        const storesApi = useApi("/api/stores");
-        const overviewApi = useApi(`/api/overview?store=${store}&weeks=${weeks}`);
-        const tsApi = useApi(`/api/timeseries?store=${store}&weeks=${weeks}`);
-        const depApi = useApi(`/api/feature-dependencies?store=${store}&weeks=${weeks}`);
-        const featSeriesApi = useApi(`/api/feature-series?store=${store}&weeks=${weeks}&feature=${feature}`);
-        const corrApi = useApi(`/api/correlation?store=${store}&weeks=${weeks}`);
+        useEffect(() => {
+          fetch("/api/stores")
+            .then((r) => r.json())
+            .then(setStores)
+            .catch(() => setStores([]));
+        }, []);
 
-        const storeOptions = useMemo(() => {
-          const rows = storesApi.data || [];
-          return [{ Store: "all" }, ...rows];
-        }, [storesApi.data]);
+        useEffect(() => {
+          fetch(`/api/store-data?store=${selectedStore}&weeks=${weeks}`)
+            .then((r) => r.json())
+            .then(setStoreData)
+            .catch(() => setStoreData([]));
 
-        const overview = overviewApi.data || {};
-        const model = overview.model || {};
-        const ts = tsApi.data || { date: [], actual: [], predicted: [] };
-        const deps = depApi.data || {};
-        const fs = featSeriesApi.data || { date: [], feature_values: [], sales: [] };
-        const corr = corrApi.data || { labels: [], z: [] };
+          fetch(`/api/overview?store=${selectedStore}&weeks=${weeks}`)
+            .then((r) => r.json())
+            .then(setOverview)
+            .catch(() => setOverview(null));
+        }, [selectedStore, weeks]);
 
-        const cardData = [
-          ["Total Sales", `$${fmt(overview.total_sales)}`],
-          ["Avg Weekly Sales", `$${fmt(overview.avg_weekly_sales)}`],
-          ["Model Accuracy", `${fmt(model.accuracy_pct)}%`],
-          ["MAPE", `${fmt(model.mape_pct)}%`],
-          ["R²", fmt(model.r2)],
-        ];
+        const stats = useMemo(() => {
+          if (!storeData.length) {
+            return {
+              avg: 0,
+              peak: 0,
+              holidayAvg: 0,
+              holidayCount: 0,
+            };
+          }
+          const sales = storeData.map((d) => d.Weekly_Sales);
+          const holidays = storeData.filter((d) => d.Holiday_Flag === 1).map((d) => d.Weekly_Sales);
+          return {
+            avg: sales.reduce((a, b) => a + b, 0) / sales.length,
+            peak: Math.max(...sales),
+            holidayAvg: holidays.length ? holidays.reduce((a, b) => a + b, 0) / holidays.length : 0,
+            holidayCount: holidays.length,
+          };
+        }, [storeData]);
 
-        const plotTheme = {
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor: "rgba(0,0,0,0)",
-          font: { color: "#f5ebd4", family: "Segoe UI, sans-serif" },
-          margin: { l: 55, r: 25, t: 55, b: 45 },
-        };
+        const correlations = useMemo(() => {
+          if (!storeData.length) return [];
+          const y = storeData.map((d) => d.Weekly_Sales);
+          return factors.map((f) => {
+            const x = storeData.map((d) => d[f.id]);
+            const corr = pearsonCorr(x, y);
+            return { ...f, corr };
+          });
+        }, [storeData]);
 
-        const tsData = [
-          {
-            x: ts.date,
-            y: ts.actual,
-            type: "scatter",
-            mode: "lines",
-            name: "Actual Sales",
-            line: { width: 2.5, color: "#1fc8c3" },
+        const selectedFactorColor = factors.find((f) => f.id === selectedFactor)?.color || "#d0ae62";
+        const scatterData = useMemo(
+          () =>
+            storeData.map((d) => ({
+              x: d[selectedFactor],
+              y: d.Weekly_Sales,
+              holiday: d.Holiday_Flag,
+              date: d.Date,
+            })),
+          [storeData, selectedFactor]
+        );
+
+        return (
+          React.createElement("div", {
+            className: "min-h-screen text-amber-50",
+            style: {
+              background:
+                "radial-gradient(1200px 700px at 92% -8%, rgba(208,174,98,0.24), transparent 58%), radial-gradient(1100px 700px at -8% 108%, rgba(15,143,141,0.33), transparent 62%), linear-gradient(145deg, #041015 0%, #08232a 48%, #05141a 100%)",
+            },
           },
-          {
-            x: ts.date,
-            y: ts.predicted,
-            type: "scatter",
-            mode: "lines",
-            name: "Predicted Sales",
-            line: { width: 2, color: "#e1bf72", dash: "dot" },
-          },
-        ];
+            React.createElement("div", {
+              className: "fixed inset-0 pointer-events-none opacity-10",
+              style: {
+                backgroundImage: `url(${logoUrl})`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "center",
+                backgroundSize: "min(58vw, 560px)",
+              },
+            }),
 
-        const depColors = {
-          CPI: "#e1bf72",
-          Unemployment: "#6dd9c8",
-          Fuel_Price: "#f5d48d",
-          Temperature: "#2ecac5",
-        };
+            React.createElement("div", { className: "relative z-10 max-w-[1600px] mx-auto p-4 md:p-6" },
+              React.createElement("div", { className: "flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6" },
+                React.createElement("div", null,
+                  React.createElement("h1", { className: "text-2xl md:text-4xl font-semibold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
+                  React.createElement("p", { className: "text-amber-200/80 mt-2" }, "Interactive analysis for 45 stores with model-aware sales intelligence")
+                ),
+                React.createElement("div", { className: "px-4 py-2 rounded-full border border-amber-200/30 bg-amber-200/10 text-amber-100 text-sm" }, "Darussalam Hyderabad Theme")
+              ),
 
-        const depData = Object.entries(deps).map(([k, val]) => ({
-          x: val.x,
-          y: val.y,
-          mode: "markers",
-          type: "scatter",
-          name: k,
-          marker: { color: depColors[k], size: 6, opacity: 0.65 },
-        }));
+              React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-12 gap-4" },
+                React.createElement("div", { className: "lg:col-span-8 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("div", { className: "flex items-center justify-between mb-3" },
+                    React.createElement("h2", { className: "text-lg font-medium flex items-center gap-2" }, React.createElement(Store, { size: 18 }), "Store Selector"),
+                    React.createElement("div", { className: "text-sm text-amber-200/80" }, `${stores.length || 45} stores`)
+                  ),
+                  React.createElement("div", { className: "grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2" },
+                    React.createElement("button", {
+                      className: `px-2 py-2 text-sm rounded-lg border ${selectedStore === "all" ? "bg-amber-200 text-emerald-950 border-amber-100" : "bg-transparent border-amber-200/30 text-amber-100"}`,
+                      onClick: () => setSelectedStore("all"),
+                    }, "All"),
+                    ...stores.map((s) =>
+                      React.createElement("button", {
+                        key: s.Store,
+                        className: `px-2 py-2 text-sm rounded-lg border ${String(selectedStore) === String(s.Store) ? "bg-amber-200 text-emerald-950 border-amber-100" : "bg-transparent border-amber-200/30 text-amber-100"}`,
+                        onClick: () => setSelectedStore(String(s.Store)),
+                      }, `S${s.Store}`)
+                    )
+                  )
+                ),
 
-        const fsData = [
-          {
-            x: fs.date,
-            y: fs.sales,
-            type: "scatter",
-            mode: "lines",
-            name: "Sales",
-            line: { color: "#33d0c8", width: 2.2 },
-            yaxis: "y",
-          },
-          {
-            x: fs.date,
-            y: fs.feature_values,
-            type: "scatter",
-            mode: "lines",
-            name: feature,
-            line: { color: "#e3bf74", width: 2 },
-            yaxis: "y2",
-          },
-        ];
+                React.createElement("div", { className: "lg:col-span-4 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("h2", { className: "text-lg font-medium mb-3" }, "Controls"),
+                  React.createElement("label", { className: "text-sm text-amber-100/80" }, "Weeks"),
+                  React.createElement("input", {
+                    type: "range",
+                    min: 52,
+                    max: 260,
+                    step: 1,
+                    value: weeks,
+                    onChange: (e) => setWeeks(Number(e.target.value)),
+                    className: "w-full mt-1",
+                  }),
+                  React.createElement("div", { className: "text-sm text-amber-200 mb-3" }, `${weeks} weeks`),
 
-        return React.createElement(
-          "div",
-          { className: "app" },
-          React.createElement("style", null, css),
-          React.createElement(
-            "div",
-            { className: "title-wrap" },
-            React.createElement(
-              "div",
-              { className: "title" },
-              React.createElement("h1", null, "Walmart 45-Store Forecast Command Center"),
-              React.createElement(
-                "p",
-                null,
-                "Interactive demand intelligence with live model overlays, feature dependence, and macro-sensitive diagnostics."
-              )
-            ),
-            React.createElement("div", { className: "chip" }, "Darussalam Hyderabad Theme")
-          ),
+                  React.createElement("label", { className: "text-sm text-amber-100/80" }, "Scatter Factor"),
+                  React.createElement("select", {
+                    value: selectedFactor,
+                    onChange: (e) => setSelectedFactor(e.target.value),
+                    className: "w-full mt-1 bg-emerald-900/60 border border-amber-200/30 rounded-lg px-3 py-2",
+                  }, ...factors.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.name))),
 
-          React.createElement(
-            "div",
-            { className: "controls" },
-            React.createElement(
-              "div",
-              { className: "panel control" },
-              React.createElement("label", null, "Store"),
-              React.createElement(
-                "select",
-                { value: store, onChange: (e) => setStore(e.target.value) },
-                storeOptions.map((s, i) =>
-                  React.createElement(
-                    "option",
-                    { key: i, value: String(s.Store) },
-                    s.Store === "all" ? "All 45 Stores" : `Store ${s.Store}`
+                  React.createElement("div", { className: "mt-4 text-sm text-amber-100/90" },
+                    `Model Accuracy: ${overview?.model?.accuracy_pct?.toFixed?.(2) ?? "-"}%`
+                  )
+                )
+              ),
+
+              React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
+                [
+                  { k: "Avg Weekly Sales", v: fmtCurrency(stats.avg), icon: DollarSign, bg: "from-emerald-500/20 to-emerald-300/10" },
+                  { k: "Peak Sales", v: fmtCurrency(stats.peak), icon: TrendingUp, bg: "from-amber-500/20 to-amber-300/10" },
+                  { k: "Holiday Average", v: fmtCurrency(stats.holidayAvg), icon: Flame, bg: "from-teal-500/20 to-teal-300/10" },
+                  { k: "Holiday Count", v: String(stats.holidayCount), icon: Activity, bg: "from-cyan-500/20 to-cyan-300/10" },
+                ].map((card) =>
+                  React.createElement("div", { key: card.k, className: `rounded-2xl border border-amber-200/30 bg-gradient-to-br ${card.bg} p-4` },
+                    React.createElement("div", { className: "flex items-center justify-between mb-2" },
+                      React.createElement("div", { className: "text-sm text-amber-100/85" }, card.k),
+                      React.createElement(card.icon, { size: 16 })
+                    ),
+                    React.createElement("div", { className: "text-2xl font-semibold" }, card.v)
+                  )
+                )
+              ),
+
+              React.createElement("div", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
+                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Weekly Sales Trend"),
+                  React.createElement("div", { className: "h-[360px]" },
+                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                      React.createElement(LineChart, { data: storeData },
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
+                        React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(YAxis, { tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(Tooltip, {
+                          formatter: (v) => fmtCurrency(v),
+                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                        }),
+                        React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#1fc8c3", dot: false, strokeWidth: 2.4, name: "Actual" }),
+                        React.createElement(Line, { type: "monotone", dataKey: "Predicted_Sales", stroke: "#d0ae62", dot: false, strokeDasharray: "5 5", strokeWidth: 2, name: "Predicted" })
+                      )
+                    )
+                  )
+                ),
+
+                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("h3", { className: "text-lg font-medium mb-3 flex items-center gap-2" }, React.createElement(Gauge, { size: 17 }), "Factor Correlations"),
+                  React.createElement("div", { className: "space-y-3" },
+                    ...correlations.map((c) => {
+                      const pct = Math.min(100, Math.abs(c.corr) * 100);
+                      const positive = c.corr >= 0;
+                      return React.createElement("div", { key: c.id, className: "rounded-xl border border-amber-200/20 p-3 bg-emerald-900/25" },
+                        React.createElement("div", { className: "flex items-center justify-between text-sm" },
+                          React.createElement("span", null, c.name),
+                          React.createElement("span", { className: "font-semibold" }, `${fmtNum(c.corr, 3)} (${corrLabel(c.corr)})`)
+                        ),
+                        React.createElement("div", { className: "h-2 rounded-full bg-black/20 mt-2 overflow-hidden" },
+                          React.createElement("div", {
+                            className: "h-full",
+                            style: {
+                              width: `${pct}%`,
+                              background: positive ? "#17b6a8" : "#d0ae62",
+                            },
+                          })
+                        )
+                      );
+                    })
+                  )
+                )
+              ),
+
+              React.createElement("div", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
+                React.createElement("div", { className: "xl:col-span-6 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, `${selectedFactor} vs Weekly Sales`),
+                  React.createElement("div", { className: "h-[340px]" },
+                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                      React.createElement(ScatterChart, null,
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
+                        React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(YAxis, { type: "number", dataKey: "y", name: "Sales", tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(Tooltip, {
+                          cursor: { strokeDasharray: "3 3" },
+                          formatter: (v, n) => (n === "y" ? fmtCurrency(v) : fmtNum(v, 2)),
+                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                        }),
+                        React.createElement(Scatter, { data: scatterData, fill: selectedFactorColor },
+                          ...scatterData.map((p, i) =>
+                            React.createElement(Cell, {
+                              key: i,
+                              fill: p.holiday ? "#d0ae62" : selectedFactorColor,
+                            })
+                          )
+                        )
+                      )
+                    )
+                  )
+                ),
+
+                React.createElement("div", { className: "xl:col-span-6 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
+                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Multi-Factor Correlation Comparison"),
+                  React.createElement("div", { className: "h-[340px]" },
+                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                      React.createElement(BarChart, { data: correlations },
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
+                        React.createElement(XAxis, { dataKey: "name", tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(YAxis, { domain: [-1, 1], tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(Tooltip, {
+                          formatter: (v) => fmtNum(v, 3),
+                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                        }),
+                        React.createElement(Bar, { dataKey: "corr", radius: [8, 8, 0, 0] },
+                          ...correlations.map((c) => React.createElement(Cell, { key: c.id, fill: c.corr >= 0 ? "#17b6a8" : "#d0ae62" }))
+                        )
+                      )
+                    )
                   )
                 )
               )
-            ),
-            React.createElement(
-              "div",
-              { className: "panel control" },
-              React.createElement("label", null, "Weeks to display"),
-              React.createElement("input", {
-                type: "range",
-                min: 52,
-                max: 260,
-                step: 4,
-                value: weeks,
-                onChange: (e) => setWeeks(Number(e.target.value)),
-              }),
-              React.createElement("div", { style: { color: "#cfbe95", marginTop: "6px", fontSize: "0.9rem" } }, `${weeks} weeks`)
-            ),
-            React.createElement(
-              "div",
-              { className: "panel control" },
-              React.createElement("label", null, "Feature-linked trend"),
-              React.createElement(
-                "select",
-                { value: feature, onChange: (e) => setFeature(e.target.value) },
-                ["CPI", "Unemployment", "Fuel_Price", "Temperature"].map((f) =>
-                  React.createElement("option", { key: f, value: f }, f)
-                )
-              )
-            ),
-            React.createElement(
-              "div",
-              { className: "panel control" },
-              React.createElement("label", null, "Model status"),
-              React.createElement(
-                "div",
-                { style: { paddingTop: "10px", color: "#f2dcaa", fontWeight: 600 } },
-                `ExtraTrees live | MAPE ${fmt(model.mape_pct)}%`
-              )
-            )
-          ),
-
-          React.createElement(
-            "div",
-            { className: "cards" },
-            ...cardData.map(([k, v]) =>
-              React.createElement(
-                "div",
-                { className: "panel card", key: k },
-                React.createElement("div", { className: "k" }, k),
-                React.createElement("div", { className: "v" }, v)
-              )
-            )
-          ),
-
-          React.createElement(
-            "div",
-            { className: "grid" },
-
-            React.createElement(
-              "div",
-              { className: "panel plot-panel span-8" },
-              React.createElement(Plot, {
-                id: "ts-plot",
-                className: "plot",
-                data: tsData,
-                layout: {
-                  ...plotTheme,
-                  title: "Actual vs Predicted Weekly Sales",
-                  xaxis: { title: "Date" },
-                  yaxis: { title: "Sales" },
-                  legend: { orientation: "h" },
-                },
-                config: { responsive: true, displaylogo: false },
-              })
-            ),
-
-            React.createElement(
-              "div",
-              { className: "panel plot-panel span-4" },
-              React.createElement(Plot, {
-                id: "corr-plot",
-                className: "plot small",
-                data: [
-                  {
-                    z: corr.z,
-                    x: corr.labels,
-                    y: corr.labels,
-                    type: "heatmap",
-                    colorscale: [
-                      [0.0, "#0b5e67"],
-                      [0.5, "#f1e6cb"],
-                      [1.0, "#b58e48"],
-                    ],
-                    zmid: 0,
-                  },
-                ],
-                layout: {
-                  ...plotTheme,
-                  title: "Feature Correlation Matrix",
-                },
-                config: { responsive: true, displaylogo: false },
-              })
-            ),
-
-            React.createElement(
-              "div",
-              { className: "panel plot-panel span-6" },
-              React.createElement(Plot, {
-                id: "dep-plot",
-                className: "plot",
-                data: depData,
-                layout: {
-                  ...plotTheme,
-                  title: "Feature Dependence: Sales vs Macro Inputs",
-                  xaxis: { title: "Feature Value" },
-                  yaxis: { title: "Weekly Sales" },
-                },
-                config: { responsive: true, displaylogo: false },
-              })
-            ),
-
-            React.createElement(
-              "div",
-              { className: "panel plot-panel span-6" },
-              React.createElement(Plot, {
-                id: "feature-series",
-                className: "plot",
-                data: fsData,
-                layout: {
-                  ...plotTheme,
-                  title: `${feature} vs Sales Timeline`,
-                  xaxis: { title: "Date" },
-                  yaxis: { title: "Sales", side: "left" },
-                  yaxis2: { title: feature, overlaying: "y", side: "right" },
-                },
-                config: { responsive: true, displaylogo: false },
-              })
             )
           )
         );

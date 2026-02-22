@@ -217,6 +217,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _json_response(self, payload)
             return
 
+        if path == '/api/store-data':
+            s = df.sort_values('Date').tail(weeks)
+            rows = []
+            for _, r in s.iterrows():
+                rows.append({
+                    'Store': int(r['Store']),
+                    'Date': r['Date'].strftime('%Y-%m-%d'),
+                    'Weekly_Sales': float(r['Weekly_Sales']),
+                    'Predicted_Sales': float(r['predicted_sales']),
+                    'Holiday_Flag': int(r['Holiday_Flag']),
+                    'Temperature': float(r['Temperature']),
+                    'Fuel_Price': float(r['Fuel_Price']),
+                    'CPI': float(r['CPI']),
+                    'Unemployment': float(r['Unemployment']),
+                })
+            _json_response(self, rows)
+            return
+
         if path == '/api/feature-dependencies':
             feats = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature']
             s = df.sort_values('Date').tail(weeks)
