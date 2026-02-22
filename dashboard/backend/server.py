@@ -1,415 +1,281 @@
-import json
+from __future__ import annotations
+
+import math
 import os
-from functools import lru_cache
-from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from typing import Any
 
 import numpy as np
 import pandas as pd
-import statsmodels.formula.api as smf
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-BASE_DIR = Path('/Users/panshulaj/Documents/sale forecasting/dashboard')
-STATIC_DIR = BASE_DIR / 'static'
-DATA_PATH = Path('/Users/panshulaj/Documents/sales-forecasting-walmart/data/walmart_sales.csv')
-
-FEATURE_COLS = [
-    'Store', 'Holiday_Flag', 'Temperature', 'Fuel_Price', 'CPI', 'Unemployment',
-    'year', 'month', 'weekofyear', 'quarter', 'is_month_start', 'is_month_end',
-    'week_sin', 'week_cos', 'sales_lag_1', 'sales_lag_2', 'sales_lag_4', 'sales_lag_8',
-    'sales_roll4_mean', 'sales_roll4_std'
+BASE_DIR = Path(__file__).resolve().parents[1]
+STATIC_DIR = BASE_DIR / "static"
+DATA_CANDIDATES = [
+    Path(os.getenv("DATA_PATH", "")) if os.getenv("DATA_PATH") else None,
+    BASE_DIR / "data" / "walmart_sales.csv",
+    BASE_DIR.parent / "data" / "walmart_sales.csv",
 ]
 
-NUMERIC_FEATURES = [c for c in FEATURE_COLS if c != 'Store']
-CATEGORICAL_FEATURES = ['Store']
+FEATURES = [
+    "Store",
+    "Holiday_Flag",
+    "Temperature",
+    "Fuel_Price",
+    "CPI",
+    "Unemployment",
+    "year",
+    "month",
+    "weekofyear",
+    "quarter",
+    "week_sin",
+    "week_cos",
+    "sales_lag_1",
+    "sales_lag_2",
+    "sales_lag_4",
+    "sales_roll4_mean",
+]
 
 
-def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    denom = np.maximum(np.abs(y_true), 1e-6)
-    return float(np.mean(np.abs((y_true - y_pred) / denom)) * 100.0)
+class ModelBundle:
+    def __init__(self, raw_df: pd.DataFrame, model_df: pd.DataFrame, model: Pipeline):
+        self.raw_df = raw_df
+        self.model_df = model_df
+        self.model = model
 
 
-def _safe_float(v: float, ndigits: int = 4) -> float:
-    return float(round(float(v), ndigits))
+def _generate_demo_data() -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    start = pd.Timestamp("2010-02-05")
+    weeks = 170
+    rng = np.random.default_rng(42)
+
+    for store in range(1, 46):
+        for i in range(weeks):
+            dt = start + pd.Timedelta(days=7 * i)
+            season = math.sin((i / 52.0) * 2 * math.pi)
+            holiday = 1 if (i % 26 == 0 or i % 26 == 25) else 0
+            fuel = 2.45 + ((i % 30) / 30.0) * 1.15
+            cpi = 205.0 + i * 0.11 + (store % 5) * 0.2
+            unemp = 9.1 - i * 0.012 + (store % 7) * 0.03
+            temp = 56 + math.sin((i / 52.0) * 2 * math.pi + store * 0.08) * 22
+            base = 150000 + store * 1100 + season * 17000 + holiday * 21000
+            sales = max(15000, base - fuel * 5200 - unemp * 1800 + cpi * 68 + rng.normal(0, 5500))
+            rows.append(
+                {
+                    "Store": store,
+                    "Date": dt.strftime("%Y-%m-%d"),
+                    "Weekly_Sales": round(float(sales), 2),
+                    "Holiday_Flag": holiday,
+                    "Temperature": round(float(temp), 3),
+                    "Fuel_Price": round(float(fuel), 3),
+                    "CPI": round(float(cpi), 3),
+                    "Unemployment": round(float(unemp), 3),
+                }
+            )
+
+    return pd.DataFrame(rows)
 
 
-def prepare_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Pipeline, dict]:
-    df = pd.read_csv(DATA_PATH)
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values(['Store', 'Date']).reset_index(drop=True)
+def _load_raw_data() -> pd.DataFrame:
+    for candidate in DATA_CANDIDATES:
+        if candidate and candidate.exists():
+            df = pd.read_csv(candidate)
+            break
+    else:
+        df = _generate_demo_data()
 
-    df_fe = df.copy()
-    df_fe['year'] = df_fe['Date'].dt.year
-    df_fe['month'] = df_fe['Date'].dt.month
-    df_fe['weekofyear'] = df_fe['Date'].dt.isocalendar().week.astype(int)
-    df_fe['quarter'] = df_fe['Date'].dt.quarter
-    df_fe['is_month_start'] = df_fe['Date'].dt.is_month_start.astype(int)
-    df_fe['is_month_end'] = df_fe['Date'].dt.is_month_end.astype(int)
-    df_fe['week_sin'] = np.sin(2 * np.pi * df_fe['weekofyear'] / 52)
-    df_fe['week_cos'] = np.cos(2 * np.pi * df_fe['weekofyear'] / 52)
+    required = {
+        "Store",
+        "Date",
+        "Weekly_Sales",
+        "Holiday_Flag",
+        "Temperature",
+        "Fuel_Price",
+        "CPI",
+        "Unemployment",
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise RuntimeError(f"Dataset missing required columns: {sorted(missing)}")
 
-    for lag in [1, 2, 4, 8]:
-        df_fe[f'sales_lag_{lag}'] = df_fe.groupby('Store')['Weekly_Sales'].shift(lag)
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values(["Store", "Date"]).reset_index(drop=True)
+    return df
 
-    df_fe['sales_roll4_mean'] = (
-        df_fe.groupby('Store')['Weekly_Sales'].shift(1).rolling(4).mean()
-    )
-    df_fe['sales_roll4_std'] = (
-        df_fe.groupby('Store')['Weekly_Sales'].shift(1).rolling(4).std()
-    )
 
-    df_fe = df_fe.dropna().reset_index(drop=True)
+def _build_model_bundle() -> ModelBundle:
+    raw_df = _load_raw_data()
+    df = raw_df.copy()
 
-    cutoff_date = df_fe['Date'].quantile(0.80)
-    train_df = df_fe[df_fe['Date'] <= cutoff_date].copy()
-    test_df = df_fe[df_fe['Date'] > cutoff_date].copy()
+    df["year"] = df["Date"].dt.year
+    df["month"] = df["Date"].dt.month
+    df["weekofyear"] = df["Date"].dt.isocalendar().week.astype(int)
+    df["quarter"] = df["Date"].dt.quarter
+    df["week_sin"] = np.sin(2 * np.pi * df["weekofyear"] / 52.0)
+    df["week_cos"] = np.cos(2 * np.pi * df["weekofyear"] / 52.0)
+
+    df["sales_lag_1"] = df.groupby("Store")["Weekly_Sales"].shift(1)
+    df["sales_lag_2"] = df.groupby("Store")["Weekly_Sales"].shift(2)
+    df["sales_lag_4"] = df.groupby("Store")["Weekly_Sales"].shift(4)
+    df["sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
+    df = df.dropna().reset_index(drop=True)
 
     preprocessor = ColumnTransformer(
         transformers=[
             (
-                'num',
-                Pipeline([
-                    ('imputer', SimpleImputer(strategy='median')),
-                    ('scaler', StandardScaler()),
-                ]),
-                NUMERIC_FEATURES,
+                "num",
+                Pipeline(
+                    [
+                        ("imputer", SimpleImputer(strategy="median")),
+                        ("scaler", StandardScaler()),
+                    ]
+                ),
+                [c for c in FEATURES if c != "Store"],
             ),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), CATEGORICAL_FEATURES),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), ["Store"]),
         ]
     )
 
-    model = ExtraTreesRegressor(
-        n_estimators=900,
-        max_depth=20,
-        min_samples_leaf=4,
-        min_samples_split=2,
-        max_features=1.0,
-        bootstrap=False,
+    reg = ExtraTreesRegressor(
+        n_estimators=400,
         random_state=42,
+        min_samples_leaf=3,
         n_jobs=-1,
     )
 
-    pipeline = Pipeline([
-        ('prep', preprocessor),
-        ('model', model),
-    ])
+    model = Pipeline([("prep", preprocessor), ("reg", reg)])
+    model.fit(df[FEATURES], df["Weekly_Sales"])
 
-    X_train = train_df[FEATURE_COLS]
-    y_train = train_df['Weekly_Sales']
-    X_test = test_df[FEATURE_COLS]
-    y_test = test_df['Weekly_Sales']
-
-    pipeline.fit(X_train, y_train)
-    y_pred_test = pipeline.predict(X_test)
-
-    metrics = {
-        'mae': _safe_float(mean_absolute_error(y_test, y_pred_test), 4),
-        'rmse': _safe_float(np.sqrt(mean_squared_error(y_test, y_pred_test)), 4),
-        'mape_pct': _safe_float(_mape(y_test.values, y_pred_test), 4),
-        'accuracy_pct': _safe_float(100.0 - _mape(y_test.values, y_pred_test), 4),
-        'r2': _safe_float(r2_score(y_test, y_pred_test), 5),
-        'train_rows': int(len(train_df)),
-        'test_rows': int(len(test_df)),
-    }
-
-    df_fe = df_fe.copy()
-    df_fe['predicted_sales'] = pipeline.predict(df_fe[FEATURE_COLS])
-    return df, df_fe, test_df, pipeline, metrics
+    df = df.copy()
+    df["Predicted_Sales"] = model.predict(df[FEATURES]).astype(float)
+    return ModelBundle(raw_df=raw_df, model_df=df, model=model)
 
 
-RAW_DF, MODEL_DF, TEST_DF, MODEL_PIPELINE, METRICS = prepare_dataset()
-CORE_SENSITIVITY_FEATURES = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature']
+bundle = _build_model_bundle()
+app = FastAPI(title="Walmart Forecast API", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-@lru_cache(maxsize=64)
-def get_parametric_coefficients(store_key: str) -> dict:
-    """Return robust OLS sensitivity coefficients on log-sales."""
-    if store_key == 'all':
-        df = RAW_DF.copy()
-    else:
-        sid = int(store_key)
-        df = RAW_DF[RAW_DF['Store'] == sid].copy()
-        if df.empty:
-            raise ValueError('No rows for requested store')
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
-    df['log_sales'] = np.log1p(df['Weekly_Sales'])
 
-    for col in CORE_SENSITIVITY_FEATURES:
-        std = float(df[col].std())
-        mean = float(df[col].mean())
-        if std <= 0:
-            df[f'z_{col}'] = 0.0
-        else:
-            df[f'z_{col}'] = (df[col] - mean) / std
-
-    if store_key == 'all':
-        formula = (
-            'log_sales ~ z_CPI + z_Unemployment + z_Fuel_Price + z_Temperature '
-            '+ Holiday_Flag + C(Store)'
+@app.get("/api/stores")
+def stores() -> list[dict[str, Any]]:
+    g = (
+        bundle.model_df.groupby("Store", as_index=False)
+        .agg(records=("Weekly_Sales", "count"), avg_sales=("Weekly_Sales", "mean"))
+        .sort_values("Store")
+    )
+    out = []
+    for _, row in g.iterrows():
+        out.append(
+            {
+                "Store": int(row["Store"]),
+                "records": int(row["records"]),
+                "avg_sales": round(float(row["avg_sales"]), 2),
+            }
         )
-    else:
-        formula = 'log_sales ~ z_CPI + z_Unemployment + z_Fuel_Price + z_Temperature + Holiday_Flag'
+    return out
 
-    fit = smf.ols(formula, data=df).fit(cov_type='HC3')
-    ci = fit.conf_int()
 
-    rows = []
-    for feat in CORE_SENSITIVITY_FEATURES:
-        term = f'z_{feat}'
-        rows.append({
-            'feature': feat,
-            'coef': _safe_float(fit.params.get(term, np.nan), 6),
-            'p_value': _safe_float(fit.pvalues.get(term, np.nan), 6),
-            't_stat': _safe_float(fit.tvalues.get(term, np.nan), 6),
-            'ci_low': _safe_float(ci.loc[term, 0], 6),
-            'ci_high': _safe_float(ci.loc[term, 1], 6),
-        })
+def _filtered_df(store: str, weeks: int) -> pd.DataFrame:
+    df = bundle.model_df
+    if store != "all":
+        try:
+            sid = int(store)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid store") from exc
+        df = df[df["Store"] == sid]
 
-    rows.sort(key=lambda r: abs(r['coef']), reverse=True)
+    df = df.sort_values("Date").tail(weeks)
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data found")
+    return df
+
+
+@app.get("/api/overview")
+def overview(store: str = "all", weeks: int = 160) -> dict[str, Any]:
+    df = _filtered_df(store, weeks)
+    holiday_sales = df[df["Holiday_Flag"] == 1]["Weekly_Sales"]
     return {
-        'scope': 'all_stores' if store_key == 'all' else f'store_{store_key}',
-        'target': 'log1p(Weekly_Sales)',
-        'n_obs': int(len(df)),
-        'model_r2': _safe_float(fit.rsquared, 6),
-        'model_adj_r2': _safe_float(fit.rsquared_adj, 6),
-        'rows': rows,
+        "store": store,
+        "records": int(len(df)),
+        "date_min": str(df["Date"].min().date()),
+        "date_max": str(df["Date"].max().date()),
+        "avg_weekly_sales": round(float(df["Weekly_Sales"].mean()), 2),
+        "peak_sales": round(float(df["Weekly_Sales"].max()), 2),
+        "holiday_avg": round(float(holiday_sales.mean() if len(holiday_sales) else 0.0), 2),
+        "holiday_count": int((df["Holiday_Flag"] == 1).sum()),
     }
 
 
-def _json_response(handler: BaseHTTPRequestHandler, payload: dict | list, status: int = 200) -> None:
-    data = json.dumps(payload).encode('utf-8')
-    handler.send_response(status)
-    handler.send_header('Access-Control-Allow-Origin', '*')
-    handler.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    handler.send_header('Access-Control-Allow-Headers', 'Content-Type')
-    handler.send_header('Content-Type', 'application/json; charset=utf-8')
-    handler.send_header('Content-Length', str(len(data)))
-    handler.end_headers()
-    handler.wfile.write(data)
-
-
-def _read_file_bytes(path: Path) -> bytes | None:
-    if not path.exists() or not path.is_file():
-        return None
-    return path.read_bytes()
-
-
-class DashboardHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args):
-        return
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = parse_qs(parsed.query)
-
-        if path.startswith('/api/'):
-            self._handle_api(path, query)
-            return
-
-        self._handle_static(path)
-
-    def _handle_api(self, path: str, query: dict[str, list[str]]):
-        if path == '/api/health':
-            _json_response(self, {'status': 'ok', 'timestamp': datetime.utcnow().isoformat() + 'Z'})
-            return
-
-        if path == '/api/stores':
-            stores = (
-                MODEL_DF.groupby('Store', as_index=False)
-                .agg(
-                    records=('Weekly_Sales', 'count'),
-                    avg_sales=('Weekly_Sales', 'mean'),
-                    total_sales=('Weekly_Sales', 'sum'),
-                )
-            )
-            out = stores.sort_values('Store').to_dict(orient='records')
-            for row in out:
-                row['Store'] = int(row['Store'])
-                row['avg_sales'] = _safe_float(row['avg_sales'], 2)
-                row['total_sales'] = _safe_float(row['total_sales'], 2)
-            _json_response(self, out)
-            return
-
-        store = query.get('store', ['all'])[0]
-        weeks = int(query.get('weeks', ['160'])[0])
-        feature = query.get('feature', ['CPI'])[0]
-
-        df = MODEL_DF
-        if store != 'all':
-            try:
-                sid = int(store)
-                df = MODEL_DF[MODEL_DF['Store'] == sid]
-            except ValueError:
-                _json_response(self, {'error': 'Invalid store id'}, 400)
-                return
-
-        if path == '/api/overview':
-            latest = df.sort_values('Date').tail(weeks)
-            payload = {
-                'store': store,
-                'records': int(len(latest)),
-                'date_min': str(latest['Date'].min().date()) if len(latest) else None,
-                'date_max': str(latest['Date'].max().date()) if len(latest) else None,
-                'total_sales': _safe_float(latest['Weekly_Sales'].sum(), 2),
-                'avg_weekly_sales': _safe_float(latest['Weekly_Sales'].mean(), 2),
-                'avg_temp': _safe_float(latest['Temperature'].mean(), 2),
-                'avg_cpi': _safe_float(latest['CPI'].mean(), 2),
-                'avg_unemployment': _safe_float(latest['Unemployment'].mean(), 2),
-                'model': METRICS,
+@app.get("/api/store-data")
+def store_data(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
+    df = _filtered_df(store, weeks)
+    rows = []
+    for _, r in df.iterrows():
+        rows.append(
+            {
+                "Store": int(r["Store"]),
+                "Date": r["Date"].strftime("%Y-%m-%d"),
+                "Weekly_Sales": round(float(r["Weekly_Sales"]), 2),
+                "Predicted_Sales": round(float(r["Predicted_Sales"]), 2),
+                "Holiday_Flag": int(r["Holiday_Flag"]),
+                "Temperature": round(float(r["Temperature"]), 3),
+                "Fuel_Price": round(float(r["Fuel_Price"]), 3),
+                "CPI": round(float(r["CPI"]), 3),
+                "Unemployment": round(float(r["Unemployment"]), 3),
             }
-            _json_response(self, payload)
-            return
-
-        if path == '/api/timeseries':
-            s = df.sort_values('Date').tail(weeks)
-            payload = {
-                'date': [d.strftime('%Y-%m-%d') for d in s['Date']],
-                'actual': [float(v) for v in s['Weekly_Sales']],
-                'predicted': [float(v) for v in s['predicted_sales']],
-            }
-            _json_response(self, payload)
-            return
-
-        if path == '/api/store-data':
-            s = df.sort_values('Date').tail(weeks)
-            rows = []
-            for _, r in s.iterrows():
-                rows.append({
-                    'Store': int(r['Store']),
-                    'Date': r['Date'].strftime('%Y-%m-%d'),
-                    'Weekly_Sales': float(r['Weekly_Sales']),
-                    'Predicted_Sales': float(r['predicted_sales']),
-                    'Holiday_Flag': int(r['Holiday_Flag']),
-                    'Temperature': float(r['Temperature']),
-                    'Fuel_Price': float(r['Fuel_Price']),
-                    'CPI': float(r['CPI']),
-                    'Unemployment': float(r['Unemployment']),
-                })
-            _json_response(self, rows)
-            return
-
-        if path == '/api/feature-dependencies':
-            feats = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature']
-            s = df.sort_values('Date').tail(weeks)
-            payload = {
-                f: {
-                    'x': [float(v) for v in s[f]],
-                    'y': [float(v) for v in s['Weekly_Sales']],
-                }
-                for f in feats
-            }
-            _json_response(self, payload)
-            return
-
-        if path == '/api/feature-series':
-            if feature not in {'CPI', 'Unemployment', 'Fuel_Price', 'Temperature'}:
-                _json_response(self, {'error': 'Unsupported feature'}, 400)
-                return
-            s = df.sort_values('Date').tail(weeks)
-            payload = {
-                'feature': feature,
-                'date': [d.strftime('%Y-%m-%d') for d in s['Date']],
-                'feature_values': [float(v) for v in s[feature]],
-                'sales': [float(v) for v in s['Weekly_Sales']],
-            }
-            _json_response(self, payload)
-            return
-
-        if path == '/api/correlation':
-            s = df.sort_values('Date').tail(weeks)
-            cols = ['Weekly_Sales', 'CPI', 'Unemployment', 'Fuel_Price', 'Temperature']
-            corr = s[cols].corr()
-            _json_response(self, {
-                'labels': cols,
-                'z': [[_safe_float(v, 4) for v in row] for row in corr.values.tolist()],
-            })
-            return
-
-        if path == '/api/coefficients':
-            store_key = 'all'
-            if store != 'all':
-                try:
-                    int(store)
-                    store_key = store
-                except ValueError:
-                    _json_response(self, {'error': 'Invalid store id'}, 400)
-                    return
-            try:
-                payload = get_parametric_coefficients(store_key)
-            except Exception as exc:
-                _json_response(self, {'error': f'Coefficient model failed: {exc}'}, 500)
-                return
-            _json_response(self, payload)
-            return
-
-        _json_response(self, {'error': 'Not found'}, 404)
-
-    def _handle_static(self, path: str):
-        if path in ('/', '/index.html'):
-            file_path = STATIC_DIR / 'index.html'
-            content_type = 'text/html; charset=utf-8'
-        else:
-            rel = path.lstrip('/')
-            file_path = STATIC_DIR / rel
-            ext = file_path.suffix.lower()
-            content_type = {
-                '.css': 'text/css; charset=utf-8',
-                '.js': 'application/javascript; charset=utf-8',
-                '.png': 'image/png',
-                '.jpg': 'image/jpeg',
-                '.jpeg': 'image/jpeg',
-                '.svg': 'image/svg+xml',
-            }.get(ext, 'application/octet-stream')
-
-        payload = _read_file_bytes(file_path)
-        if payload is None:
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        self.send_response(200)
-        self.send_header('Content-Type', content_type)
-        self.send_header('Content-Length', str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        )
+    return rows
 
 
-def run():
-    host = '0.0.0.0'
-    requested_port = int(os.getenv('PORT', '8080'))
-    last_error = None
-
-    # Auto-fallback to next ports when the requested port is already in use.
-    for port in range(requested_port, requested_port + 15):
-        try:
-            server = ThreadingHTTPServer((host, port), DashboardHandler)
-            print(f'Dashboard server running on http://{host}:{port}')
-            server.serve_forever()
-            return
-        except OSError as exc:
-            last_error = exc
-            if getattr(exc, 'errno', None) == 48:
-                continue
-            raise
-
-    if last_error is not None:
-        raise last_error
+@app.get("/api/correlations")
+def correlations(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
+    df = _filtered_df(store, weeks)
+    y = df["Weekly_Sales"].astype(float)
+    features = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
+    out = []
+    for f in features:
+        c = float(np.corrcoef(df[f].astype(float), y)[0, 1]) if len(df) > 1 else 0.0
+        if np.isnan(c):
+            c = 0.0
+        out.append({"feature": f, "corr": round(c, 4)})
+    return out
 
 
-if __name__ == '__main__':
-    run()
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str) -> FileResponse:
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    target = STATIC_DIR / full_path
+    if target.exists() and target.is_file():
+        return FileResponse(target)
+    return FileResponse(STATIC_DIR / "index.html")

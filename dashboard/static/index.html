@@ -3,498 +3,291 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Walmart Sales Analytics Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+    <title>Walmart Forecast Dashboard</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: #121a2b;
+        --muted: #99a7c2;
+        --txt: #e6edf9;
+        --accent: #35c4a1;
+        --accent2: #6aa9ff;
+        --warn: #f5b042;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(900px 500px at 10% -10%, #173c58, transparent), var(--bg);
+        color: var(--txt);
+      }
+      .container { max-width: 1300px; margin: 0 auto; padding: 18px; }
+      .panel {
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+        border: 1px solid rgba(255,255,255,.1);
+        border-radius: 14px;
+        padding: 14px;
+      }
+      .head { display: grid; gap: 10px; grid-template-columns: 1fr auto; align-items: end; }
+      .sub { color: var(--muted); font-size: 14px; }
+      .grid { display: grid; gap: 14px; }
+      .grid-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+      .span-8 { grid-column: span 8; }
+      .span-4 { grid-column: span 4; }
+      .span-7 { grid-column: span 7; }
+      .span-5 { grid-column: span 5; }
+      .cards { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .card { border-radius: 12px; padding: 12px; background: #1b2539; border: 1px solid rgba(255,255,255,.08); }
+      .k { color: var(--muted); font-size: 13px; }
+      .v { font-size: 24px; font-weight: 700; margin-top: 6px; }
+      select, input[type="range"] { width: 100%; }
+      select {
+        background: #0e1729; color: var(--txt); border: 1px solid rgba(255,255,255,.15);
+        border-radius: 10px; padding: 8px;
+      }
+      .chart { width: 100%; height: 320px; background: #101a2d; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; }
+      .bars { display: grid; gap: 10px; }
+      .bar { background: #0f1a2e; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 8px; }
+      .bar-track { margin-top: 7px; height: 9px; border-radius: 99px; background: #243146; overflow: hidden; }
+      .bar-fill { height: 100%; }
+      .legend { font-size: 12px; color: var(--muted); }
+      .row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+      @media (max-width: 1100px) {
+        .span-8, .span-4, .span-7, .span-5 { grid-column: span 12; }
+        .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 640px) {
+        .head { grid-template-columns: 1fr; }
+        .row { grid-template-columns: 1fr; }
+        .cards { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div class="container">
+      <div class="head">
+        <div>
+          <h1 style="margin:0 0 8px 0;">Walmart Forecast Dashboard</h1>
+          <div class="sub">FastAPI backend + ML model + responsive frontend</div>
+        </div>
+        <div class="panel" style="padding:10px 12px;">Live data + predictions</div>
+      </div>
+
+      <div class="grid grid-12" style="margin-top:14px;">
+        <div class="panel span-8">
+          <div class="row">
+            <div>
+              <label class="sub">Store</label>
+              <select id="store"></select>
+            </div>
+            <div>
+              <label class="sub">Weeks: <span id="weeksVal">160</span></label>
+              <input id="weeks" type="range" min="52" max="260" value="160" />
+            </div>
+          </div>
+        </div>
+        <div class="panel span-4">
+          <label class="sub">Scatter Factor</label>
+          <select id="factor">
+            <option value="CPI">CPI</option>
+            <option value="Unemployment">Unemployment</option>
+            <option value="Fuel_Price">Fuel Price</option>
+            <option value="Temperature">Temperature</option>
+          </select>
+          <div id="status" class="sub" style="margin-top:9px;">Loading...</div>
+        </div>
+      </div>
+
+      <div class="cards" style="margin-top:14px;">
+        <div class="card"><div class="k">Average Weekly Sales</div><div id="avg" class="v">-</div></div>
+        <div class="card"><div class="k">Peak Sales</div><div id="peak" class="v">-</div></div>
+        <div class="card"><div class="k">Holiday Avg</div><div id="havg" class="v">-</div></div>
+        <div class="card"><div class="k">Holiday Count</div><div id="hcount" class="v">-</div></div>
+      </div>
+
+      <div class="grid grid-12" style="margin-top:14px;">
+        <div class="panel span-8">
+          <div style="margin-bottom:8px;">Weekly Sales vs Prediction</div>
+          <svg id="trend" class="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+          <div class="legend">Green: Actual, Blue: Predicted</div>
+        </div>
+        <div class="panel span-4">
+          <div style="margin-bottom:8px;">Feature Correlations</div>
+          <div id="corrBars" class="bars"></div>
+        </div>
+      </div>
+
+      <div class="grid grid-12" style="margin-top:14px; margin-bottom:20px;">
+        <div class="panel span-7">
+          <div style="margin-bottom:8px;">Scatter: Factor vs Sales</div>
+          <svg id="scatter" class="chart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+          <div class="legend">Orange dots are holiday weeks</div>
+        </div>
+        <div class="panel span-5">
+          <div style="margin-bottom:8px;">Last 12 Rows</div>
+          <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+            <table style="width:100%; border-collapse: collapse; font-size:12px;">
+              <thead>
+                <tr style="background:#142036; position:sticky; top:0;">
+                  <th style="text-align:left; padding:8px;">Date</th>
+                  <th style="text-align:right; padding:8px;">Actual</th>
+                  <th style="text-align:right; padding:8px;">Pred</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script>
-      const { useMemo, useState } = React;
-      const {
-        ResponsiveContainer,
-        LineChart,
-        Line,
-        XAxis,
-        YAxis,
-        CartesianGrid,
-        Tooltip,
-        ScatterChart,
-        Scatter,
-        BarChart,
-        Bar,
-        Cell,
-      } = Recharts;
+      const state = { stores: [], store: "all", weeks: 160, factor: "CPI", rows: [], corr: [] };
 
-      const FACTORS = [
-        { id: "CPI", label: "CPI", color: "#2dd4bf" },
-        { id: "Unemployment", label: "Unemployment", color: "#f59e0b" },
-        { id: "Fuel_Price", label: "Fuel Price", color: "#60a5fa" },
-        { id: "Temperature", label: "Temperature", color: "#fb7185" },
-      ];
+      const fmtMoney = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n || 0));
 
-      function fmtCurrency(value) {
-        return new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: "USD",
-          maximumFractionDigits: 0,
-        }).format(Number(value) || 0);
+      const api = (path) => fetch(path).then((r) => {
+        if (!r.ok) throw new Error(path + " failed");
+        return r.json();
+      });
+
+      function buildStoreOptions(stores) {
+        const sel = document.getElementById("store");
+        sel.innerHTML = `<option value="all">All Stores</option>` + stores.map((s) => `<option value="${s.Store}">Store ${s.Store}</option>`).join("");
       }
 
-      function fmtNum(value, digits = 2) {
-        return Number(value || 0).toFixed(digits);
+      function drawLine(svgId, rows) {
+        const svg = document.getElementById(svgId);
+        const w = 900;
+        const h = 320;
+        const pad = 28;
+        if (!rows.length) { svg.innerHTML = ""; return; }
+
+        const ys = rows.flatMap((r) => [r.Weekly_Sales, r.Predicted_Sales]);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
+        const xScale = (_, i) => pad + (i / Math.max(1, rows.length - 1)) * (w - pad * 2);
+
+        const actual = rows.map((r, i) => `${xScale(r, i)},${yScale(r.Weekly_Sales)}`).join(" ");
+        const pred = rows.map((r, i) => `${xScale(r, i)},${yScale(r.Predicted_Sales)}`).join(" ");
+
+        svg.innerHTML = `
+          <rect x="0" y="0" width="${w}" height="${h}" fill="#101a2d" />
+          <polyline fill="none" stroke="#35c4a1" stroke-width="2.2" points="${actual}" />
+          <polyline fill="none" stroke="#6aa9ff" stroke-width="2" points="${pred}" />
+        `;
       }
 
-      function pearsonCorr(x, y) {
-        if (!x || !x.length || x.length !== y.length) return 0;
-        const n = x.length;
-        const meanX = x.reduce((a, b) => a + b, 0) / n;
-        const meanY = y.reduce((a, b) => a + b, 0) / n;
-        let numerator = 0;
-        let dx = 0;
-        let dy = 0;
-        for (let i = 0; i < n; i += 1) {
-          const vx = x[i] - meanX;
-          const vy = y[i] - meanY;
-          numerator += vx * vy;
-          dx += vx * vx;
-          dy += vy * vy;
-        }
-        const denominator = Math.sqrt(dx * dy);
-        return denominator === 0 ? 0 : numerator / denominator;
+      function drawScatter(rows, factor) {
+        const svg = document.getElementById("scatter");
+        const w = 900;
+        const h = 320;
+        const pad = 28;
+        if (!rows.length) { svg.innerHTML = ""; return; }
+
+        const xs = rows.map((r) => Number(r[factor]));
+        const ys = rows.map((r) => Number(r.Weekly_Sales));
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const xScale = (v) => pad + ((v - minX) / Math.max(1, maxX - minX)) * (w - pad * 2);
+        const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
+
+        svg.innerHTML =
+          `<rect x="0" y="0" width="${w}" height="${h}" fill="#101a2d" />` +
+          rows
+            .map((r) => {
+              const color = Number(r.Holiday_Flag) === 1 ? "#f5b042" : "#35c4a1";
+              return `<circle cx="${xScale(Number(r[factor]))}" cy="${yScale(Number(r.Weekly_Sales))}" r="3" fill="${color}" />`;
+            })
+            .join("");
       }
 
-      function corrLabel(c) {
-        const v = Math.abs(c);
-        if (v > 0.7) return "Strong";
-        if (v > 0.4) return "Moderate";
-        if (v > 0.2) return "Weak";
-        return "Very Weak";
+      function renderCorrBars(corr) {
+        const el = document.getElementById("corrBars");
+        el.innerHTML = corr
+          .map((c) => {
+            const pct = Math.min(100, Math.abs(c.corr) * 100);
+            const color = c.corr >= 0 ? "#35c4a1" : "#f5b042";
+            return `
+              <div class="bar">
+                <div style="display:flex; justify-content:space-between;"><span>${c.feature}</span><span>${Number(c.corr).toFixed(3)}</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${color};"></div></div>
+              </div>
+            `;
+          })
+          .join("");
       }
 
-      function parseRows(rows) {
-        return rows
-          .map((r) => ({
-            Store: Number(r.Store),
-            Date: String(r.Date || ""),
-            Weekly_Sales: Number(r.Weekly_Sales),
-            Holiday_Flag: Number(r.Holiday_Flag || 0),
-            Temperature: Number(r.Temperature),
-            Fuel_Price: Number(r.Fuel_Price),
-            CPI: Number(r.CPI),
-            Unemployment: Number(r.Unemployment),
-          }))
-          .filter(
-            (r) =>
-              Number.isFinite(r.Store) &&
-              r.Date &&
-              Number.isFinite(r.Weekly_Sales) &&
-              Number.isFinite(r.Temperature) &&
-              Number.isFinite(r.Fuel_Price) &&
-              Number.isFinite(r.CPI) &&
-              Number.isFinite(r.Unemployment)
-          )
-          .sort((a, b) => new Date(a.Date) - new Date(b.Date));
+      function renderRows(rows) {
+        const tbody = document.getElementById("rows");
+        tbody.innerHTML = rows.slice(-12).reverse().map((r) => `
+          <tr>
+            <td style="padding:8px; border-top:1px solid rgba(255,255,255,.08);">${r.Date}</td>
+            <td style="padding:8px; text-align:right; border-top:1px solid rgba(255,255,255,.08);">${fmtMoney(r.Weekly_Sales)}</td>
+            <td style="padding:8px; text-align:right; border-top:1px solid rgba(255,255,255,.08);">${fmtMoney(r.Predicted_Sales)}</td>
+          </tr>
+        `).join("");
       }
 
-      function generateDemoData() {
-        const out = [];
-        const start = new Date("2010-02-05");
-        const weeks = 156;
-        for (let s = 1; s <= 45; s += 1) {
-          for (let i = 0; i < weeks; i += 1) {
-            const d = new Date(start);
-            d.setDate(start.getDate() + i * 7);
-            const season = Math.sin((i / 52) * 2 * Math.PI);
-            const holiday = i % 26 === 0 || i % 26 === 25 ? 1 : 0;
-            const base = 150000 + s * 1200 + season * 18000 + holiday * 22000;
-            const fuel = 2.4 + ((i % 30) / 30) * 1.2;
-            const cpi = 205 + i * 0.1 + (s % 5) * 0.25;
-            const unemp = 9 - i * 0.01 + (s % 7) * 0.03;
-            const temp = 58 + Math.sin((i / 52) * 2 * Math.PI + s * 0.08) * 22;
-            const sales = Math.max(10000, base - fuel * 6000 - unemp * 1900 + cpi * 75 + Math.random() * 13000);
-            out.push({
-              Store: s,
-              Date: d.toISOString().slice(0, 10),
-              Weekly_Sales: Number(sales.toFixed(2)),
-              Holiday_Flag: holiday,
-              Temperature: Number(temp.toFixed(2)),
-              Fuel_Price: Number(fuel.toFixed(3)),
-              CPI: Number(cpi.toFixed(3)),
-              Unemployment: Number(unemp.toFixed(3)),
-            });
-          }
-        }
-        return out;
+      async function refresh() {
+        document.getElementById("status").textContent = "Loading...";
+        const q = `store=${encodeURIComponent(state.store)}&weeks=${state.weeks}`;
+        const [ov, rows, corr] = await Promise.all([
+          api(`/api/overview?${q}`),
+          api(`/api/store-data?${q}`),
+          api(`/api/correlations?${q}`),
+        ]);
+        state.rows = rows;
+        state.corr = corr;
+
+        document.getElementById("avg").textContent = fmtMoney(ov.avg_weekly_sales);
+        document.getElementById("peak").textContent = fmtMoney(ov.peak_sales);
+        document.getElementById("havg").textContent = fmtMoney(ov.holiday_avg);
+        document.getElementById("hcount").textContent = String(ov.holiday_count);
+        document.getElementById("status").textContent = `Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max})`;
+
+        drawLine("trend", rows);
+        drawScatter(rows, state.factor);
+        renderCorrBars(corr);
+        renderRows(rows);
       }
 
-      function App() {
-        const [allData, setAllData] = useState(generateDemoData());
-        const [selectedStore, setSelectedStore] = useState("all");
-        const [selectedFactor, setSelectedFactor] = useState("CPI");
-        const [rowsLimit, setRowsLimit] = useState(160);
-        const [message, setMessage] = useState("Loaded with demo data. Upload your walmart_sales.csv to replace.");
+      async function init() {
+        const stores = await api("/api/stores");
+        state.stores = stores;
+        buildStoreOptions(stores);
 
-        const stores = useMemo(() => {
-          const unique = [...new Set(allData.map((d) => d.Store))].sort((a, b) => a - b);
-          return unique;
-        }, [allData]);
+        const storeEl = document.getElementById("store");
+        const weeksEl = document.getElementById("weeks");
+        const factorEl = document.getElementById("factor");
 
-        const storeData = useMemo(() => {
-          const filtered = selectedStore === "all" ? allData : allData.filter((d) => d.Store === Number(selectedStore));
-          return filtered.slice(-rowsLimit);
-        }, [allData, selectedStore, rowsLimit]);
+        storeEl.onchange = async (e) => {
+          state.store = e.target.value;
+          await refresh();
+        };
 
-        const stats = useMemo(() => {
-          if (!storeData.length) return { avg: 0, peak: 0, holidayAvg: 0, holidayCount: 0 };
-          const sales = storeData.map((d) => d.Weekly_Sales);
-          const holidayRows = storeData.filter((d) => d.Holiday_Flag === 1);
-          return {
-            avg: sales.reduce((a, b) => a + b, 0) / sales.length,
-            peak: Math.max(...sales),
-            holidayAvg: holidayRows.length
-              ? holidayRows.reduce((acc, row) => acc + row.Weekly_Sales, 0) / holidayRows.length
-              : 0,
-            holidayCount: holidayRows.length,
-          };
-        }, [storeData]);
+        weeksEl.oninput = async (e) => {
+          state.weeks = Number(e.target.value);
+          document.getElementById("weeksVal").textContent = String(state.weeks);
+          await refresh();
+        };
 
-        const correlations = useMemo(() => {
-          if (!storeData.length) return [];
-          const y = storeData.map((d) => d.Weekly_Sales);
-          return FACTORS.map((factor) => {
-            const x = storeData.map((d) => d[factor.id]);
-            const corr = pearsonCorr(x, y);
-            return { ...factor, corr };
-          });
-        }, [storeData]);
+        factorEl.onchange = (e) => {
+          state.factor = e.target.value;
+          drawScatter(state.rows, state.factor);
+        };
 
-        const scatterData = useMemo(
-          () =>
-            storeData.map((d) => ({
-              x: d[selectedFactor],
-              y: d.Weekly_Sales,
-              holiday: d.Holiday_Flag,
-              date: d.Date,
-            })),
-          [storeData, selectedFactor]
-        );
-
-        const trendRows = useMemo(
-          () =>
-            storeData.map((d) => ({
-              Date: d.Date,
-              Weekly_Sales: d.Weekly_Sales,
-            })),
-          [storeData]
-        );
-
-        function handleFileUpload(event) {
-          const file = event.target.files && event.target.files[0];
-          if (!file) return;
-          Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            complete: (result) => {
-              const parsed = parseRows(result.data || []);
-              if (!parsed.length) {
-                setMessage("CSV parsed but no valid rows found. Ensure required columns exist.");
-                return;
-              }
-              setAllData(parsed);
-              setSelectedStore("all");
-              setMessage(`Loaded ${parsed.length} rows from ${file.name}.`);
-            },
-            error: () => {
-              setMessage("Failed to parse CSV. Please upload a valid walmart sales CSV file.");
-            },
-          });
-        }
-
-        const selectedColor = (FACTORS.find((f) => f.id === selectedFactor) || {}).color || "#2dd4bf";
-
-        return React.createElement(
-          "div",
-          {
-            className: "min-h-screen text-slate-100",
-            style: {
-              background:
-                "radial-gradient(1000px 500px at 5% -10%, rgba(45,212,191,0.2), transparent 60%), radial-gradient(1200px 650px at 100% 110%, rgba(245,158,11,0.2), transparent 65%), linear-gradient(135deg, #05242f 0%, #0d1222 58%, #111827 100%)",
-            },
-          },
-          React.createElement(
-            "div",
-            { className: "max-w-[1500px] mx-auto p-4 md:p-6 lg:p-8" },
-            React.createElement(
-              "header",
-              { className: "flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5" },
-              React.createElement(
-                "div",
-                null,
-                React.createElement("h1", { className: "text-2xl md:text-4xl font-bold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
-                React.createElement(
-                  "p",
-                  { className: "text-slate-300 mt-2 text-sm md:text-base" },
-                  "Responsive dashboard with CSV upload, store-level analytics, and factor correlations"
-                )
-              ),
-              React.createElement(
-                "div",
-                { className: "text-xs md:text-sm px-3 py-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10" },
-                `Stores available: ${stores.length || 0}`
-              )
-            ),
-
-            React.createElement(
-              "section",
-              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4" },
-              React.createElement(
-                "div",
-                { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
-                React.createElement("div", { className: "mb-3 text-cyan-300" }, "Upload CSV"),
-                React.createElement(
-                  "div",
-                  { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-                  React.createElement(
-                    "label",
-                    { className: "text-sm" },
-                    React.createElement("span", { className: "text-slate-300" }, "Select walmart_sales.csv"),
-                    React.createElement("input", {
-                      type: "file",
-                      accept: ".csv,text/csv",
-                      className:
-                        "w-full mt-1 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-cyan-400",
-                      onChange: handleFileUpload,
-                    })
-                  ),
-                  React.createElement(
-                    "div",
-                    { className: "text-xs md:text-sm rounded-lg border border-white/15 bg-slate-900/30 p-3 text-slate-200" },
-                    "Required columns: Store, Date, Weekly_Sales, Holiday_Flag, Temperature, Fuel_Price, CPI, Unemployment"
-                  )
-                ),
-                React.createElement("p", { className: "text-xs md:text-sm text-slate-300 mt-2" }, message)
-              ),
-
-              React.createElement(
-                "div",
-                { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
-                React.createElement("div", { className: "mb-3 text-amber-300" }, "Store Selector"),
-                React.createElement(
-                  "div",
-                  { className: "grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-44 overflow-auto pr-1" },
-                  React.createElement(
-                    "button",
-                    {
-                      className: `text-xs rounded-md px-2 py-1 border transition ${
-                        selectedStore === "all" ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"
-                      }`,
-                      onClick: () => setSelectedStore("all"),
-                    },
-                    "All"
-                  ),
-                  ...stores.map((s) =>
-                    React.createElement(
-                      "button",
-                      {
-                        key: s,
-                        className: `text-xs rounded-md px-2 py-1 border transition ${
-                          String(s) === String(selectedStore)
-                            ? "bg-cyan-500 text-white border-cyan-300"
-                            : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"
-                        }`,
-                        onClick: () => setSelectedStore(String(s)),
-                      },
-                      `S${s}`
-                    )
-                  )
-                ),
-                React.createElement("label", { className: "block mt-4 text-sm text-slate-300" }, "Recent Weeks"),
-                React.createElement("input", {
-                  type: "range",
-                  min: 52,
-                  max: 260,
-                  value: rowsLimit,
-                  onChange: (e) => setRowsLimit(Number(e.target.value)),
-                  className: "w-full mt-1",
-                }),
-                React.createElement("div", { className: "text-xs text-slate-300 mt-1" }, `${rowsLimit} weeks`)
-              )
-            ),
-
-            React.createElement(
-              "section",
-              { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
-              [
-                { label: "Avg Weekly Sales", value: fmtCurrency(stats.avg), tint: "from-cyan-500/25 to-cyan-900/20" },
-                { label: "Peak Sales", value: fmtCurrency(stats.peak), tint: "from-amber-500/30 to-amber-900/20" },
-                { label: "Holiday Avg", value: fmtCurrency(stats.holidayAvg), tint: "from-rose-500/25 to-rose-900/20" },
-                { label: "Holiday Count", value: String(stats.holidayCount), tint: "from-indigo-500/25 to-indigo-900/20" },
-              ].map((card) =>
-                React.createElement(
-                  "div",
-                  { key: card.label, className: `rounded-2xl border border-white/15 p-4 bg-gradient-to-br ${card.tint}` },
-                  React.createElement("span", { className: "text-sm text-slate-200" }, card.label),
-                  React.createElement("div", { className: "text-2xl font-semibold mt-2" }, card.value)
-                )
-              )
-            ),
-
-            React.createElement(
-              "section",
-              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
-              React.createElement(
-                "div",
-                { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Weekly Sales Trend"),
-                React.createElement(
-                  "div",
-                  { className: "h-[320px] md:h-[360px]" },
-                  React.createElement(
-                    ResponsiveContainer,
-                    { width: "100%", height: "100%" },
-                    React.createElement(
-                      LineChart,
-                      { data: trendRows },
-                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                      React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(YAxis, { tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(Tooltip, {
-                        formatter: (v) => fmtCurrency(v),
-                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                      }),
-                      React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#2dd4bf", dot: false, strokeWidth: 2.4 })
-                    )
-                  )
-                )
-              ),
-
-              React.createElement(
-                "div",
-                { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Factor Correlations"),
-                React.createElement(
-                  "div",
-                  { className: "space-y-3" },
-                  ...correlations.map((c) =>
-                    React.createElement(
-                      "div",
-                      { key: c.id, className: "rounded-xl border border-white/15 bg-slate-900/30 p-3" },
-                      React.createElement(
-                        "div",
-                        { className: "flex items-center justify-between text-sm" },
-                        React.createElement("span", null, c.label),
-                        React.createElement("span", { className: "font-semibold" }, `${fmtNum(c.corr, 3)} (${corrLabel(c.corr)})`)
-                      ),
-                      React.createElement(
-                        "div",
-                        { className: "h-2 rounded-full bg-black/30 mt-2 overflow-hidden" },
-                        React.createElement("div", {
-                          className: "h-full",
-                          style: {
-                            width: `${Math.min(100, Math.abs(c.corr) * 100)}%`,
-                            backgroundColor: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
-                          },
-                        })
-                      )
-                    )
-                  )
-                )
-              )
-            ),
-
-            React.createElement(
-              "section",
-              { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4 pb-6" },
-              React.createElement(
-                "div",
-                { className: "xl:col-span-7 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                React.createElement(
-                  "div",
-                  { className: "flex items-center justify-between gap-3 mb-3" },
-                  React.createElement("h2", { className: "text-lg font-semibold" }, "Scatter Analysis"),
-                  React.createElement(
-                    "select",
-                    {
-                      value: selectedFactor,
-                      onChange: (e) => setSelectedFactor(e.target.value),
-                      className: "bg-slate-900/50 border border-white/20 rounded-md px-3 py-1 text-sm",
-                    },
-                    ...FACTORS.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.label))
-                  )
-                ),
-                React.createElement(
-                  "div",
-                  { className: "h-[320px] md:h-[360px]" },
-                  React.createElement(
-                    ResponsiveContainer,
-                    { width: "100%", height: "100%" },
-                    React.createElement(
-                      ScatterChart,
-                      null,
-                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                      React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(YAxis, { type: "number", dataKey: "y", name: "Weekly Sales", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(Tooltip, {
-                        cursor: { strokeDasharray: "3 3" },
-                        formatter: (v, n) => (n === "y" ? fmtCurrency(v) : fmtNum(v, 2)),
-                        labelFormatter: (_, payload) => (payload && payload[0] && payload[0].payload ? payload[0].payload.date : ""),
-                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                      }),
-                      React.createElement(
-                        Scatter,
-                        { data: scatterData, fill: selectedColor },
-                        ...scatterData.map((p, idx) =>
-                          React.createElement(Cell, {
-                            key: idx,
-                            fill: p.holiday ? "#f59e0b" : selectedColor,
-                          })
-                        )
-                      )
-                    )
-                  )
-                )
-              ),
-
-              React.createElement(
-                "div",
-                { className: "xl:col-span-5 rounded-2xl border border-white/15 bg-white/5 p-4" },
-                React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Multi-Factor Correlation Bar Chart"),
-                React.createElement(
-                  "div",
-                  { className: "h-[320px] md:h-[360px]" },
-                  React.createElement(
-                    ResponsiveContainer,
-                    { width: "100%", height: "100%" },
-                    React.createElement(
-                      BarChart,
-                      { data: correlations },
-                      React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
-                      React.createElement(XAxis, { dataKey: "label", tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(YAxis, { domain: [-1, 1], tick: { fill: "#e2e8f0", fontSize: 11 } }),
-                      React.createElement(Tooltip, {
-                        formatter: (v) => [fmtNum(v, 3), "Correlation"],
-                        contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
-                      }),
-                      React.createElement(
-                        Bar,
-                        { dataKey: "corr", radius: [8, 8, 0, 0] },
-                        ...correlations.map((c) => React.createElement(Cell, { key: c.id, fill: c.corr >= 0 ? "#2dd4bf" : "#f59e0b" }))
-                      )
-                    )
-                  )
-                )
-              )
-            )
-          )
-        );
+        await refresh();
       }
 
-      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+      init().catch((err) => {
+        document.getElementById("status").textContent = "Failed to load dashboard";
+        console.error(err);
+      });
     </script>
   </body>
 </html>
