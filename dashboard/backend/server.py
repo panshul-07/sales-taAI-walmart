@@ -306,10 +306,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def run():
     host = '0.0.0.0'
-    port = int(os.getenv('PORT', '8080'))
-    server = ThreadingHTTPServer((host, port), DashboardHandler)
-    print(f'Dashboard server running on http://{host}:{port}')
-    server.serve_forever()
+    requested_port = int(os.getenv('PORT', '8080'))
+    last_error = None
+
+    # Auto-fallback to next ports when the requested port is already in use.
+    for port in range(requested_port, requested_port + 15):
+        try:
+            server = ThreadingHTTPServer((host, port), DashboardHandler)
+            print(f'Dashboard server running on http://{host}:{port}')
+            server.serve_forever()
+            return
+        except OSError as exc:
+            last_error = exc
+            if getattr(exc, 'errno', None) == 48:
+                continue
+            raise
+
+    if last_error is not None:
+        raise last_error
 
 
 if __name__ == '__main__':
