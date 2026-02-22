@@ -6,8 +6,9 @@
     <title>Walmart Sales Analytics Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
-      import React, { useEffect, useMemo, useState } from "https://esm.sh/react@18.3.1";
+      import React, { useMemo, useState } from "https://esm.sh/react@18.3.1";
       import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+      import Papa from "https://esm.sh/papaparse@5.4.1";
       import {
         ResponsiveContainer,
         LineChart,
@@ -22,28 +23,13 @@
         Bar,
         Cell,
       } from "https://esm.sh/recharts@2.12.7";
-      import {
-        Store,
-        TrendingUp,
-        Activity,
-        Flame,
-        DollarSign,
-        Gauge,
-      } from "https://esm.sh/lucide-react@0.468.0";
+      import { Building2, Upload, Activity, Flame, DollarSign, TrendingUp } from "https://esm.sh/lucide-react@0.468.0";
 
-      const logoUrl = "https://darussalam.in/wp-content/uploads/2020/09/logo.png";
-      const DEFAULT_STORES = Array.from({ length: 45 }, (_, i) => ({ Store: i + 1 }));
-      const API_BASE =
-        window.location.hostname === "walmart-sales-frontend.onrender.com"
-          ? "https://walmart-sales-api.onrender.com"
-          : "";
-      const apiFetch = (path) => fetch(`${API_BASE}${path}`);
-
-      const factors = [
-        { id: "CPI", name: "CPI", color: "#d0ae62", unit: "index" },
-        { id: "Unemployment", name: "Unemployment", color: "#25b6aa", unit: "%" },
-        { id: "Fuel_Price", name: "Fuel Price", color: "#c39a45", unit: "$" },
-        { id: "Temperature", name: "Temperature", color: "#13a89f", unit: "°F" },
+      const FACTORS = [
+        { id: "CPI", label: "CPI", color: "#2dd4bf" },
+        { id: "Unemployment", label: "Unemployment", color: "#f59e0b" },
+        { id: "Fuel_Price", label: "Fuel Price", color: "#60a5fa" },
+        { id: "Temperature", label: "Temperature", color: "#fb7185" },
       ];
 
       function fmtCurrency(value) {
@@ -51,7 +37,7 @@
           style: "currency",
           currency: "USD",
           maximumFractionDigits: 0,
-        }).format(value || 0);
+        }).format(Number(value) || 0);
       }
 
       function fmtNum(value, digits = 2) {
@@ -61,20 +47,20 @@
       function pearsonCorr(x, y) {
         if (!x?.length || x.length !== y.length) return 0;
         const n = x.length;
-        const mx = x.reduce((a, b) => a + b, 0) / n;
-        const my = y.reduce((a, b) => a + b, 0) / n;
-        let num = 0;
+        const meanX = x.reduce((a, b) => a + b, 0) / n;
+        const meanY = y.reduce((a, b) => a + b, 0) / n;
+        let numerator = 0;
         let dx = 0;
         let dy = 0;
-        for (let i = 0; i < n; i++) {
-          const xv = x[i] - mx;
-          const yv = y[i] - my;
-          num += xv * yv;
-          dx += xv * xv;
-          dy += yv * yv;
+        for (let i = 0; i < n; i += 1) {
+          const vx = x[i] - meanX;
+          const vy = y[i] - meanY;
+          numerator += vx * vy;
+          dx += vx * vx;
+          dy += vy * vy;
         }
-        const den = Math.sqrt(dx * dy);
-        return den === 0 ? 0 : num / den;
+        const denominator = Math.sqrt(dx * dy);
+        return denominator === 0 ? 0 : numerator / denominator;
       }
 
       function corrLabel(c) {
@@ -85,94 +71,103 @@
         return "Very Weak";
       }
 
-      function App() {
-        const [stores, setStores] = useState(DEFAULT_STORES);
-        const [selectedStore, setSelectedStore] = useState("all");
-        const [weeks, setWeeks] = useState(143);
-        const [selectedFactor, setSelectedFactor] = useState("CPI");
-        const [storeData, setStoreData] = useState([]);
-        const [overview, setOverview] = useState(null);
-        const [coeffSummary, setCoeffSummary] = useState(null);
-        const [storeLoadError, setStoreLoadError] = useState(false);
+      function parseRows(rows) {
+        return rows
+          .map((r) => ({
+            Store: Number(r.Store),
+            Date: String(r.Date || ""),
+            Weekly_Sales: Number(r.Weekly_Sales),
+            Holiday_Flag: Number(r.Holiday_Flag || 0),
+            Temperature: Number(r.Temperature),
+            Fuel_Price: Number(r.Fuel_Price),
+            CPI: Number(r.CPI),
+            Unemployment: Number(r.Unemployment),
+          }))
+          .filter(
+            (r) =>
+              Number.isFinite(r.Store) &&
+              r.Date &&
+              Number.isFinite(r.Weekly_Sales) &&
+              Number.isFinite(r.Temperature) &&
+              Number.isFinite(r.Fuel_Price) &&
+              Number.isFinite(r.CPI) &&
+              Number.isFinite(r.Unemployment)
+          )
+          .sort((a, b) => new Date(a.Date) - new Date(b.Date));
+      }
 
-        useEffect(() => {
-          apiFetch("/api/stores")
-            .then((r) => {
-              if (!r.ok) throw new Error(`Store fetch failed (${r.status})`);
-              return r.json();
-            })
-            .then((rows) => {
-              const parsed = Array.isArray(rows) ? rows.filter((s) => Number.isFinite(Number(s.Store))) : [];
-              if (!parsed.length) {
-                setStores(DEFAULT_STORES);
-                setStoreLoadError(true);
-                return;
-              }
-              setStores(DEFAULT_STORES);
-              setStoreLoadError(false);
-            })
-            .catch(() => {
-              setStores(DEFAULT_STORES);
-              setStoreLoadError(true);
+      function generateDemoData() {
+        const out = [];
+        const start = new Date("2010-02-05");
+        const weeks = 156;
+        for (let s = 1; s <= 45; s += 1) {
+          for (let i = 0; i < weeks; i += 1) {
+            const d = new Date(start);
+            d.setDate(start.getDate() + i * 7);
+            const season = Math.sin((i / 52) * 2 * Math.PI);
+            const holiday = i % 26 === 0 || i % 26 === 25 ? 1 : 0;
+            const base = 150000 + s * 1200 + season * 18000 + holiday * 22000;
+            const fuel = 2.4 + ((i % 30) / 30) * 1.2;
+            const cpi = 205 + i * 0.1 + (s % 5) * 0.25;
+            const unemp = 9 - i * 0.01 + (s % 7) * 0.03;
+            const temp = 58 + Math.sin((i / 52) * 2 * Math.PI + s * 0.08) * 22;
+            const sales = Math.max(10000, base - fuel * 6000 - unemp * 1900 + cpi * 75 + Math.random() * 13000);
+            out.push({
+              Store: s,
+              Date: d.toISOString().slice(0, 10),
+              Weekly_Sales: Number(sales.toFixed(2)),
+              Holiday_Flag: holiday,
+              Temperature: Number(temp.toFixed(2)),
+              Fuel_Price: Number(fuel.toFixed(3)),
+              CPI: Number(cpi.toFixed(3)),
+              Unemployment: Number(unemp.toFixed(3)),
             });
-        }, []);
+          }
+        }
+        return out;
+      }
 
-        useEffect(() => {
-          apiFetch(`/api/store-data?store=${selectedStore}&weeks=${weeks}`)
-            .then((r) => {
-              if (!r.ok) throw new Error(`Store data fetch failed (${r.status})`);
-              return r.json();
-            })
-            .then(setStoreData)
-            .catch(() => setStoreData([]));
+      function App() {
+        const [allData, setAllData] = useState(generateDemoData());
+        const [selectedStore, setSelectedStore] = useState("all");
+        const [selectedFactor, setSelectedFactor] = useState("CPI");
+        const [rowsLimit, setRowsLimit] = useState(160);
+        const [message, setMessage] = useState("Loaded with demo data. Upload your walmart_sales.csv to replace.");
 
-          apiFetch(`/api/overview?store=${selectedStore}&weeks=${weeks}`)
-            .then((r) => {
-              if (!r.ok) throw new Error(`Overview fetch failed (${r.status})`);
-              return r.json();
-            })
-            .then(setOverview)
-            .catch(() => setOverview(null));
+        const stores = useMemo(() => {
+          const unique = [...new Set(allData.map((d) => d.Store))].sort((a, b) => a - b);
+          return unique;
+        }, [allData]);
 
-          apiFetch(`/api/coefficients?store=${selectedStore}`)
-            .then((r) => {
-              if (!r.ok) throw new Error(`Coefficient fetch failed (${r.status})`);
-              return r.json();
-            })
-            .then(setCoeffSummary)
-            .catch(() => setCoeffSummary(null));
-        }, [selectedStore, weeks]);
+        const storeData = useMemo(() => {
+          const filtered = selectedStore === "all" ? allData : allData.filter((d) => d.Store === Number(selectedStore));
+          return filtered.slice(-rowsLimit);
+        }, [allData, selectedStore, rowsLimit]);
 
         const stats = useMemo(() => {
-          if (!storeData.length) {
-            return {
-              avg: 0,
-              peak: 0,
-              holidayAvg: 0,
-              holidayCount: 0,
-            };
-          }
+          if (!storeData.length) return { avg: 0, peak: 0, holidayAvg: 0, holidayCount: 0 };
           const sales = storeData.map((d) => d.Weekly_Sales);
-          const holidays = storeData.filter((d) => d.Holiday_Flag === 1).map((d) => d.Weekly_Sales);
+          const holidayRows = storeData.filter((d) => d.Holiday_Flag === 1);
           return {
             avg: sales.reduce((a, b) => a + b, 0) / sales.length,
             peak: Math.max(...sales),
-            holidayAvg: holidays.length ? holidays.reduce((a, b) => a + b, 0) / holidays.length : 0,
-            holidayCount: holidays.length,
+            holidayAvg: holidayRows.length
+              ? holidayRows.reduce((acc, row) => acc + row.Weekly_Sales, 0) / holidayRows.length
+              : 0,
+            holidayCount: holidayRows.length,
           };
         }, [storeData]);
 
         const correlations = useMemo(() => {
           if (!storeData.length) return [];
           const y = storeData.map((d) => d.Weekly_Sales);
-          return factors.map((f) => {
-            const x = storeData.map((d) => d[f.id]);
+          return FACTORS.map((factor) => {
+            const x = storeData.map((d) => d[factor.id]);
             const corr = pearsonCorr(x, y);
-            return { ...f, corr };
+            return { ...factor, corr };
           });
         }, [storeData]);
 
-        const selectedFactorColor = factors.find((f) => f.id === selectedFactor)?.color || "#d0ae62";
         const scatterData = useMemo(
           () =>
             storeData.map((d) => ({
@@ -184,169 +179,199 @@
           [storeData, selectedFactor]
         );
 
+        const trendRows = useMemo(
+          () =>
+            storeData.map((d) => ({
+              Date: d.Date,
+              Weekly_Sales: d.Weekly_Sales,
+            })),
+          [storeData]
+        );
+
+        const handleFileUpload = (event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (result) => {
+              const parsed = parseRows(result.data || []);
+              if (!parsed.length) {
+                setMessage("CSV parsed but no valid rows found. Ensure required columns exist.");
+                return;
+              }
+              setAllData(parsed);
+              setSelectedStore("all");
+              setMessage(`Loaded ${parsed.length} rows from ${file.name}.`);
+            },
+            error: () => {
+              setMessage("Failed to parse CSV. Please upload a valid walmart sales CSV file.");
+            },
+          });
+        };
+
+        const selectedColor = FACTORS.find((f) => f.id === selectedFactor)?.color || "#2dd4bf";
+
         return (
           React.createElement("div", {
-            className: "min-h-screen text-amber-50",
+            className: "min-h-screen text-slate-100",
             style: {
               background:
-                "radial-gradient(1200px 700px at 92% -8%, rgba(208,174,98,0.24), transparent 58%), radial-gradient(1100px 700px at -8% 108%, rgba(15,143,141,0.33), transparent 62%), linear-gradient(145deg, #041015 0%, #08232a 48%, #05141a 100%)",
+                "radial-gradient(1000px 500px at 5% -10%, rgba(45,212,191,0.2), transparent 60%), radial-gradient(1200px 650px at 100% 110%, rgba(245,158,11,0.2), transparent 65%), linear-gradient(135deg, #05242f 0%, #0d1222 58%, #111827 100%)",
             },
           },
-            React.createElement("div", {
-              className: "fixed inset-0 pointer-events-none opacity-10",
-              style: {
-                backgroundImage: `url(${logoUrl})`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "center",
-                backgroundSize: "min(58vw, 560px)",
-              },
-            }),
-
-            React.createElement("div", { className: "relative z-10 max-w-[1600px] mx-auto p-4 md:p-6" },
-              React.createElement("div", { className: "flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6" },
+            React.createElement("div", { className: "max-w-[1500px] mx-auto p-4 md:p-6 lg:p-8" },
+              React.createElement("header", { className: "flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5" },
                 React.createElement("div", null,
-                  React.createElement("h1", { className: "text-2xl md:text-4xl font-semibold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
-                  React.createElement("p", { className: "text-amber-200/80 mt-2" }, "Interactive analysis for 45 stores with model-aware sales intelligence")
+                  React.createElement("h1", { className: "text-2xl md:text-4xl font-bold tracking-tight" }, "Walmart Sales Analytics Dashboard"),
+                  React.createElement("p", { className: "text-slate-300 mt-2 text-sm md:text-base" }, "Responsive React dashboard with CSV upload, store-level analytics, and factor correlations")
                 ),
-                React.createElement("div", { className: "px-4 py-2 rounded-full border border-amber-200/30 bg-amber-200/10 text-amber-100 text-sm" }, "Darussalam Hyderabad Theme")
+                React.createElement("div", { className: "text-xs md:text-sm px-3 py-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10" }, `Stores available: ${stores.length || 0}`)
               ),
 
-              React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-12 gap-4" },
-                React.createElement("div", { className: "lg:col-span-8 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("div", { className: "flex items-center justify-between mb-3" },
-                    React.createElement("h2", { className: "text-lg font-medium flex items-center gap-2" }, React.createElement(Store, { size: 18 }), "Store Selector"),
-                    React.createElement("div", { className: "text-sm text-amber-200/80" }, "45 stores")
-                  ),
+              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4" },
+                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
+                  React.createElement("div", { className: "flex items-center gap-2 mb-3 text-cyan-300" }, React.createElement(Upload, { size: 16 }), "Upload CSV"),
                   React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-                    React.createElement("div", null,
-                      React.createElement("label", { className: "text-sm text-amber-100/80" }, "Choose Store"),
-                      React.createElement("select", {
-                        value: selectedStore,
-                        onChange: (e) => setSelectedStore(e.target.value),
-                        className: "w-full mt-1 bg-emerald-900/60 border border-amber-200/30 rounded-lg px-3 py-2",
-                      },
-                        React.createElement("option", { value: "all" }, "All Stores"),
-                        ...stores.map((s) =>
-                          React.createElement("option", { key: s.Store, value: String(s.Store) }, `Store ${s.Store}`)
-                        )
-                      )
+                    React.createElement("label", { className: "text-sm" },
+                      React.createElement("span", { className: "text-slate-300" }, "Select walmart_sales.csv"),
+                      React.createElement("input", {
+                        type: "file",
+                        accept: ".csv,text/csv",
+                        className: "w-full mt-1 block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-cyan-400",
+                        onChange: handleFileUpload,
+                      })
                     ),
-                    React.createElement("div", { className: "text-sm text-amber-200/85 rounded-lg border border-amber-200/20 bg-emerald-900/35 px-3 py-2" },
-                      selectedStore === "all" ? "Showing all 45 stores combined." : `Showing data for Store ${selectedStore}.`,
-                      storeLoadError ? " Store list is from local fallback (1-45)." : ""
+                    React.createElement("div", { className: "text-xs md:text-sm rounded-lg border border-white/15 bg-slate-900/30 p-3 text-slate-200" },
+                      "Required columns: Store, Date, Weekly_Sales, Holiday_Flag, Temperature, Fuel_Price, CPI, Unemployment"
                     )
-                  )
+                  ),
+                  React.createElement("p", { className: "text-xs md:text-sm text-slate-300 mt-2" }, message)
                 ),
 
-                React.createElement("div", { className: "lg:col-span-4 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h2", { className: "text-lg font-medium mb-3" }, "Controls"),
-                  React.createElement("label", { className: "text-sm text-amber-100/80" }, "Weeks"),
+                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm p-4" },
+                  React.createElement("div", { className: "flex items-center gap-2 mb-3 text-amber-300" }, React.createElement(Building2, { size: 16 }), "Store Selector"),
+                  React.createElement("div", { className: "grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-44 overflow-auto pr-1" },
+                    React.createElement(
+                      "button",
+                      {
+                        className: `text-xs rounded-md px-2 py-1 border transition ${selectedStore === "all" ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"}`,
+                        onClick: () => setSelectedStore("all"),
+                      },
+                      "All"
+                    ),
+                    ...stores.map((s) =>
+                      React.createElement(
+                        "button",
+                        {
+                          key: s,
+                          className: `text-xs rounded-md px-2 py-1 border transition ${String(s) === String(selectedStore) ? "bg-cyan-500 text-white border-cyan-300" : "bg-slate-900/30 border-white/20 hover:bg-slate-800/50"}`,
+                          onClick: () => setSelectedStore(String(s)),
+                        },
+                        `S${s}`
+                      )
+                    )
+                  ),
+                  React.createElement("label", { className: "block mt-4 text-sm text-slate-300" }, "Recent Weeks"),
                   React.createElement("input", {
                     type: "range",
                     min: 52,
                     max: 260,
-                    step: 1,
-                    value: weeks,
-                    onChange: (e) => setWeeks(Number(e.target.value)),
+                    value: rowsLimit,
+                    onChange: (e) => setRowsLimit(Number(e.target.value)),
                     className: "w-full mt-1",
                   }),
-                  React.createElement("div", { className: "text-sm text-amber-200 mb-3" }, `${weeks} weeks`),
-
-                  React.createElement("label", { className: "text-sm text-amber-100/80" }, "Scatter Factor"),
-                  React.createElement("select", {
-                    value: selectedFactor,
-                    onChange: (e) => setSelectedFactor(e.target.value),
-                    className: "w-full mt-1 bg-emerald-900/60 border border-amber-200/30 rounded-lg px-3 py-2",
-                  }, ...factors.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.name))),
-
-                  React.createElement("div", { className: "mt-4 text-sm text-amber-100/90" },
-                    `Model Accuracy: ${overview?.model?.accuracy_pct?.toFixed?.(2) ?? "-"}%`
-                  )
+                  React.createElement("div", { className: "text-xs text-slate-300 mt-1" }, `${rowsLimit} weeks`)
                 )
               ),
 
-              React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
+              React.createElement("section", { className: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4" },
                 [
-                  { k: "Avg Weekly Sales", v: fmtCurrency(stats.avg), icon: DollarSign, bg: "from-emerald-500/20 to-emerald-300/10" },
-                  { k: "Peak Sales", v: fmtCurrency(stats.peak), icon: TrendingUp, bg: "from-amber-500/20 to-amber-300/10" },
-                  { k: "Holiday Average", v: fmtCurrency(stats.holidayAvg), icon: Flame, bg: "from-teal-500/20 to-teal-300/10" },
-                  { k: "Holiday Count", v: String(stats.holidayCount), icon: Activity, bg: "from-cyan-500/20 to-cyan-300/10" },
+                  { label: "Avg Weekly Sales", value: fmtCurrency(stats.avg), icon: DollarSign, tint: "from-cyan-500/25 to-cyan-900/20" },
+                  { label: "Peak Sales", value: fmtCurrency(stats.peak), icon: TrendingUp, tint: "from-amber-500/30 to-amber-900/20" },
+                  { label: "Holiday Avg", value: fmtCurrency(stats.holidayAvg), icon: Flame, tint: "from-rose-500/25 to-rose-900/20" },
+                  { label: "Holiday Count", value: String(stats.holidayCount), icon: Activity, tint: "from-indigo-500/25 to-indigo-900/20" },
                 ].map((card) =>
-                  React.createElement("div", { key: card.k, className: `rounded-2xl border border-amber-200/30 bg-gradient-to-br ${card.bg} p-4` },
-                    React.createElement("div", { className: "flex items-center justify-between mb-2" },
-                      React.createElement("div", { className: "text-sm text-amber-100/85" }, card.k),
+                  React.createElement("div", { key: card.label, className: `rounded-2xl border border-white/15 p-4 bg-gradient-to-br ${card.tint}` },
+                    React.createElement("div", { className: "flex items-center justify-between" },
+                      React.createElement("span", { className: "text-sm text-slate-200" }, card.label),
                       React.createElement(card.icon, { size: 16 })
                     ),
-                    React.createElement("div", { className: "text-2xl font-semibold" }, card.v)
+                    React.createElement("div", { className: "text-2xl font-semibold mt-2" }, card.value)
                   )
                 )
               ),
 
-              React.createElement("div", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
-                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Weekly Sales Trend"),
-                  React.createElement("div", { className: "h-[360px]" },
+              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
+                React.createElement("div", { className: "xl:col-span-8 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Weekly Sales Trend"),
+                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
                     React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                      React.createElement(LineChart, { data: storeData },
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
-                        React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                        React.createElement(YAxis, { tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                      React.createElement(LineChart, { data: trendRows },
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                        React.createElement(XAxis, { dataKey: "Date", tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                        React.createElement(YAxis, { tick: { fill: "#e2e8f0", fontSize: 11 } }),
                         React.createElement(Tooltip, {
                           formatter: (v) => fmtCurrency(v),
-                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
                         }),
-                        React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#1fc8c3", dot: false, strokeWidth: 2.4, name: "Actual" }),
-                        React.createElement(Line, { type: "monotone", dataKey: "Predicted_Sales", stroke: "#d0ae62", dot: false, strokeDasharray: "5 5", strokeWidth: 2, name: "Predicted" })
+                        React.createElement(Line, { type: "monotone", dataKey: "Weekly_Sales", stroke: "#2dd4bf", dot: false, strokeWidth: 2.4 })
                       )
                     )
                   )
                 ),
 
-                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h3", { className: "text-lg font-medium mb-3 flex items-center gap-2" }, React.createElement(Gauge, { size: 17 }), "Factor Correlations"),
+                React.createElement("div", { className: "xl:col-span-4 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Factor Correlations"),
                   React.createElement("div", { className: "space-y-3" },
-                    ...correlations.map((c) => {
-                      const pct = Math.min(100, Math.abs(c.corr) * 100);
-                      const positive = c.corr >= 0;
-                      return React.createElement("div", { key: c.id, className: "rounded-xl border border-amber-200/20 p-3 bg-emerald-900/25" },
+                    ...correlations.map((c) =>
+                      React.createElement("div", { key: c.id, className: "rounded-xl border border-white/15 bg-slate-900/30 p-3" },
                         React.createElement("div", { className: "flex items-center justify-between text-sm" },
-                          React.createElement("span", null, c.name),
+                          React.createElement("span", null, c.label),
                           React.createElement("span", { className: "font-semibold" }, `${fmtNum(c.corr, 3)} (${corrLabel(c.corr)})`)
                         ),
-                        React.createElement("div", { className: "h-2 rounded-full bg-black/20 mt-2 overflow-hidden" },
+                        React.createElement("div", { className: "h-2 rounded-full bg-black/30 mt-2 overflow-hidden" },
                           React.createElement("div", {
                             className: "h-full",
                             style: {
-                              width: `${pct}%`,
-                              background: positive ? "#17b6a8" : "#d0ae62",
+                              width: `${Math.min(100, Math.abs(c.corr) * 100)}%`,
+                              backgroundColor: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
                             },
                           })
                         )
-                      );
-                    })
+                      )
+                    )
                   )
                 )
               ),
 
-              React.createElement("div", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4" },
-                React.createElement("div", { className: "xl:col-span-6 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, `${selectedFactor} vs Weekly Sales`),
-                  React.createElement("div", { className: "h-[340px]" },
+              React.createElement("section", { className: "grid grid-cols-1 xl:grid-cols-12 gap-4 mt-4 pb-6" },
+                React.createElement("div", { className: "xl:col-span-7 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                  React.createElement("div", { className: "flex items-center justify-between gap-3 mb-3" },
+                    React.createElement("h2", { className: "text-lg font-semibold" }, "Scatter Analysis"),
+                    React.createElement("select", {
+                      value: selectedFactor,
+                      onChange: (e) => setSelectedFactor(e.target.value),
+                      className: "bg-slate-900/50 border border-white/20 rounded-md px-3 py-1 text-sm",
+                    }, ...FACTORS.map((f) => React.createElement("option", { key: f.id, value: f.id }, f.label)))
+                  ),
+                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
                     React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
                       React.createElement(ScatterChart, null,
-                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
-                        React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                        React.createElement(YAxis, { type: "number", dataKey: "y", name: "Sales", tick: { fill: "#f5ebd4", fontSize: 11 } }),
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                        React.createElement(XAxis, { type: "number", dataKey: "x", name: selectedFactor, tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                        React.createElement(YAxis, { type: "number", dataKey: "y", name: "Weekly Sales", tick: { fill: "#e2e8f0", fontSize: 11 } }),
                         React.createElement(Tooltip, {
                           cursor: { strokeDasharray: "3 3" },
                           formatter: (v, n) => (n === "y" ? fmtCurrency(v) : fmtNum(v, 2)),
-                          contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
+                          labelFormatter: (_, payload) => payload?.[0]?.payload?.date || "",
+                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
                         }),
-                        React.createElement(Scatter, { data: scatterData, fill: selectedFactorColor },
-                          ...scatterData.map((p, i) =>
+                        React.createElement(Scatter, { data: scatterData, fill: selectedColor },
+                          ...scatterData.map((p, idx) =>
                             React.createElement(Cell, {
-                              key: i,
-                              fill: p.holiday ? "#d0ae62" : selectedFactorColor,
+                              key: idx,
+                              fill: p.holiday ? "#f59e0b" : selectedColor,
                             })
                           )
                         )
@@ -355,39 +380,31 @@
                   )
                 ),
 
-                React.createElement("div", { className: "xl:col-span-6 rounded-2xl border border-amber-200/30 bg-emerald-950/50 p-4" },
-                  React.createElement("h3", { className: "text-lg font-medium mb-3" }, "Coefficient Sensitivity (Parametric OLS)"),
-                  React.createElement("div", { className: "h-[340px]" },
-                    coeffSummary && coeffSummary.rows && coeffSummary.rows.length
-                      ? React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
-                          React.createElement(BarChart, { data: coeffSummary.rows },
-                            React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.15)" }),
-                            React.createElement(XAxis, { dataKey: "feature", tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                            React.createElement(YAxis, { tick: { fill: "#f5ebd4", fontSize: 11 } }),
-                            React.createElement(Tooltip, {
-                              formatter: (v, name, item) => {
-                                if (name === "coef") return [fmtNum(v, 4), "Coefficient"];
-                                return [v, name];
-                              },
-                              labelFormatter: (_, payload) => {
-                                const row = payload?.[0]?.payload;
-                                if (!row) return "";
-                                return `${row.feature} | p=${fmtNum(row.p_value, 5)} | t=${fmtNum(row.t_stat, 3)}`;
-                              },
-                              contentStyle: { background: "#08232a", border: "1px solid rgba(219,191,122,.45)" },
-                            }),
-                            React.createElement(Bar, { dataKey: "coef", radius: [8, 8, 0, 0] },
-                              ...coeffSummary.rows.map((c) => React.createElement(Cell, { key: c.feature, fill: c.coef >= 0 ? "#17b6a8" : "#d0ae62" }))
-                            )
+                React.createElement("div", { className: "xl:col-span-5 rounded-2xl border border-white/15 bg-white/5 p-4" },
+                  React.createElement("h2", { className: "text-lg font-semibold mb-3" }, "Multi-Factor Correlation Bar Chart"),
+                  React.createElement("div", { className: "h-[320px] md:h-[360px]" },
+                    React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                      React.createElement(BarChart, { data: correlations },
+                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }),
+                        React.createElement(XAxis, { dataKey: "label", tick: { fill: "#e2e8f0", fontSize: 11 } }),
+                        React.createElement(YAxis, {
+                          domain: [-1, 1],
+                          tick: { fill: "#e2e8f0", fontSize: 11 },
+                        }),
+                        React.createElement(Tooltip, {
+                          formatter: (v) => [fmtNum(v, 3), "Correlation"],
+                          contentStyle: { background: "#0f172a", border: "1px solid rgba(148,163,184,0.4)" },
+                        }),
+                        React.createElement(Bar, { dataKey: "corr", radius: [8, 8, 0, 0] },
+                          ...correlations.map((c) =>
+                            React.createElement(Cell, {
+                              key: c.id,
+                              fill: c.corr >= 0 ? "#2dd4bf" : "#f59e0b",
+                            })
                           )
                         )
-                        : React.createElement("div", { className: "h-full flex items-center justify-center text-amber-100/80" }, "Coefficient model unavailable")
-                  )
-                  ,
-                  React.createElement("div", { className: "text-xs text-amber-200/75 mt-2" },
-                    coeffSummary
-                      ? `Target: ${coeffSummary.target}, Scope: ${coeffSummary.scope}, R²: ${fmtNum(coeffSummary.model_r2, 4)}`
-                      : "Sensitivity is based on standardized OLS coefficients for CPI, Unemployment, Fuel Price, and Temperature."
+                      )
+                    )
                   )
                 )
               )
