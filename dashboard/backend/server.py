@@ -203,7 +203,28 @@ def stores() -> list[dict[str, Any]]:
 
 def _filtered_rows(store: str, weeks: int) -> list[dict[str, Any]]:
     if store == "all":
-        data = MODEL_ROWS
+        by_date: dict[str, list[dict[str, Any]]] = {}
+        for r in MODEL_ROWS:
+            by_date.setdefault(str(r["Date"]), []).append(r)
+
+        data = []
+        for dt in sorted(by_date.keys()):
+            rows = by_date[dt]
+            sales = [float(x["Weekly_Sales"]) for x in rows]
+            preds = [float(x["Predicted_Sales"]) for x in rows]
+            data.append(
+                {
+                    "Store": 0,
+                    "Date": dt,
+                    "Weekly_Sales": round(sum(sales), 2),
+                    "Predicted_Sales": round(sum(preds), 2),
+                    "Holiday_Flag": int(max(int(x["Holiday_Flag"]) for x in rows)),
+                    "Temperature": round(mean([float(x["Temperature"]) for x in rows]), 3),
+                    "Fuel_Price": round(mean([float(x["Fuel_Price"]) for x in rows]), 3),
+                    "CPI": round(mean([float(x["CPI"]) for x in rows]), 3),
+                    "Unemployment": round(mean([float(x["Unemployment"]) for x in rows]), 3),
+                }
+            )
     else:
         try:
             sid = int(store)
