@@ -471,7 +471,8 @@
         document.getElementById("peak").textContent = fmtMoney(ov.peak_sales);
         document.getElementById("havg").textContent = fmtMoney(ov.holiday_avg);
         document.getElementById("hcount").textContent = String(ov.holiday_count);
-        document.getElementById("status").textContent = `Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max})`;
+        const modelLabel = coef.model_source === "notebook_ols" ? "Notebook OLS coefficients" : "Fallback coefficients";
+        document.getElementById("status").textContent = `Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max}) | ${modelLabel}`;
 
         renderCorrBars(corr);
         renderCoefTable();

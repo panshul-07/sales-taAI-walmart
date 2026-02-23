@@ -13,8 +13,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+try:
+    import numpy as np
+    import pandas as pd
+    import statsmodels.formula.api as smf
+
+    HAS_NOTEBOOK_STACK = True
+except Exception:
+    HAS_NOTEBOOK_STACK = False
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = BASE_DIR / "static"
+FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -112,7 +122,7 @@ def _load_csv_data() -> list[dict[str, Any]]:
     return _generate_demo_data()
 
 
-def _predict_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _predict_series_heuristic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_store: dict[int, list[float]] = {}
     out: list[dict[str, Any]] = []
 
@@ -164,10 +174,105 @@ def _std(values: list[float]) -> float:
     return math.sqrt(max(var, 0.0))
 
 
-RAW_ROWS = _load_csv_data()
-MODEL_ROWS = _predict_series(RAW_ROWS)
+def _fit_notebook_like_model(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[tuple[int, str], float], dict[str, float], dict[str, Any]]:
+    if not HAS_NOTEBOOK_STACK:
+        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "notebook dependencies not installed"})
 
-app = FastAPI(title="Walmart Forecast API", version="3.0.0")
+    if len(rows) < 180:
+        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "insufficient rows"})
+
+    df = pd.DataFrame(rows).copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values(["Store", "Date"]).reset_index(drop=True)
+
+    df["weekofyear"] = df["Date"].dt.isocalendar().week.astype(int)
+    df["week_sin"] = np.sin(2 * np.pi * df["weekofyear"] / 52)
+    df["week_cos"] = np.cos(2 * np.pi * df["weekofyear"] / 52)
+    df["trend"] = (df["Date"] - df["Date"].min()).dt.days
+
+    df["sales_lag_1"] = df.groupby("Store")["Weekly_Sales"].shift(1)
+    df["sales_lag_4"] = df.groupby("Store")["Weekly_Sales"].shift(4)
+    df["sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
+    df["sales_roll4_std"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).std()
+
+    model_df = df.dropna().copy()
+    if len(model_df) < 160:
+        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "insufficient rows after feature engineering"})
+
+    formula = (
+        "Weekly_Sales ~ Holiday_Flag + Temperature + Fuel_Price + CPI + Unemployment "
+        "+ trend + week_sin + week_cos + sales_lag_1 + sales_lag_4 + sales_roll4_mean + sales_roll4_std"
+    )
+
+    if int(model_df["Store"].nunique()) > 1:
+        formula += " + C(Store)"
+
+    try:
+        if int(model_df["Store"].nunique()) > 1:
+            model = smf.ols(formula=formula, data=model_df).fit(
+                cov_type="cluster", cov_kwds={"groups": model_df["Store"]}
+            )
+        else:
+            model = smf.ols(formula=formula, data=model_df).fit()
+    except Exception as exc:
+        return ({}, {}, {"model_source": "heuristic_fallback", "reason": f"ols fit failed: {exc}"})
+
+    model_df["Predicted_Sales"] = model.predict(model_df)
+
+    pred_map: dict[tuple[int, str], float] = {}
+    for _, r in model_df[["Store", "Date", "Predicted_Sales"]].iterrows():
+        key = (int(r["Store"]), pd.Timestamp(r["Date"]).strftime("%Y-%m-%d"))
+        pred_map[key] = float(r["Predicted_Sales"])
+
+    coef_map = {f: float(model.params.get(f, 0.0)) for f in FEATURES}
+    info = {
+        "model_source": "notebook_ols",
+        "formula": formula,
+        "r2": float(model.rsquared),
+        "rows_fit": int(len(model_df)),
+    }
+    return pred_map, coef_map, info
+
+
+def _build_model_artifact(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    base_rows = _predict_series_heuristic(rows)
+    pred_map, coef_map, info = _fit_notebook_like_model(rows)
+
+    merged_rows: list[dict[str, Any]] = []
+    for r in base_rows:
+        key = (int(r["Store"]), str(r["Date"]))
+        out = dict(r)
+        if key in pred_map:
+            out["Predicted_Sales"] = round(max(1000.0, float(pred_map[key])), 2)
+        merged_rows.append(out)
+
+    if not coef_map:
+        # Keep old behavior as fallback for a non-breaking UI.
+        coef_map = {}
+        for f in FEATURES:
+            x = [float(v[f]) for v in merged_rows]
+            y = [float(v["Weekly_Sales"]) for v in merged_rows]
+            corr = _pearson(x, y)
+            std_x = _std(x)
+            std_y = _std(y)
+            coef_map[f] = 0.0 if std_x == 0 else corr * (std_y / std_x)
+
+    return {
+        "rows": merged_rows,
+        "coefficients": coef_map,
+        "info": info,
+    }
+
+
+RAW_ROWS = _load_csv_data()
+MODEL_ARTIFACT = _build_model_artifact(RAW_ROWS)
+MODEL_ROWS = MODEL_ARTIFACT["rows"]
+MODEL_COEFFICIENTS = MODEL_ARTIFACT["coefficients"]
+MODEL_INFO = MODEL_ARTIFACT["info"]
+
+app = FastAPI(title="Walmart Forecast API", version="4.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -179,7 +284,12 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "rows": len(MODEL_ROWS)}
+    return {
+        "status": "ok",
+        "rows": len(MODEL_ROWS),
+        "model_source": MODEL_INFO.get("model_source", "unknown"),
+        "model_info": MODEL_INFO,
+    }
 
 
 @app.get("/api/stores")
@@ -266,9 +376,8 @@ def store_data(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
 def correlations(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
     rows = _filtered_rows(store, weeks)
     y = [float(r["Weekly_Sales"]) for r in rows]
-    fields = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
     out = []
-    for f in fields:
+    for f in FEATURES:
         x = [float(r[f]) for r in rows]
         out.append({"feature": f, "corr": round(_pearson(x, y), 4)})
     return out
@@ -279,15 +388,14 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     rows = _filtered_rows(store, weeks)
     y = [float(r["Weekly_Sales"]) for r in rows]
     std_y = _std(y)
-    fields = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
     out = []
 
-    for f in fields:
+    for f in FEATURES:
         x = [float(r[f]) for r in rows]
         corr = _pearson(x, y)
         std_x = _std(x)
-        beta_per_unit = 0.0 if std_x == 0 else corr * (std_y / std_x)
         mean_x = sum(x) / len(x) if x else 0.0
+        beta_per_unit = float(MODEL_COEFFICIENTS.get(f, 0.0))
         beta_10pct = beta_per_unit * (0.1 * mean_x)
         out.append(
             {
@@ -306,7 +414,9 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "weeks": weeks,
         "rows": out,
         "target": "Weekly_Sales",
-        "note": "beta_per_unit is derived from corr * (std_y/std_x).",
+        "model_source": MODEL_INFO.get("model_source", "unknown"),
+        "model_info": MODEL_INFO,
+        "note": "beta_per_unit comes from the fitted notebook-style OLS model; fallback is correlation-derived beta if OLS stack is unavailable.",
     }
 
 
