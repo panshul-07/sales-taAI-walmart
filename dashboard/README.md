@@ -45,3 +45,7 @@ Open: `http://127.0.0.1:8000`
 - start app with `uvicorn backend.server:app --host 0.0.0.0 --port $PORT`
 
 Deploy this folder as the service root (`rootDir: dashboard`).
+
+## Live URL
+
+- `https://walmart-sales-frontend.onrender.com/`

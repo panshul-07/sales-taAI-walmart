@@ -37,8 +37,8 @@ Open: `http://127.0.0.1:8000`
 
 ## Live Dashboard Link
 
-- Current live URL: `https://eb632f6bf04d57.lhr.life`
-- Note: this is a temporary tunnel link and may expire.
+- Current live URL: `https://walmart-sales-frontend.onrender.com/`
+- This is the persistent Render deployment URL.
 
 ## Notes
 
