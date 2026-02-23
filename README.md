@@ -35,11 +35,6 @@ Open: `http://127.0.0.1:8000`
 2. Create/update Render Blueprint using `dashboard/render.yaml`.
 3. Deploy web service.
 
-## Live Dashboard Link
-
-- Current live URL: `https://walmart-sales-frontend.onrender.com/`
-- This is the persistent Render deployment URL.
-
 ## Notes
 
 - If a real CSV is available, set `DATA_PATH` to use it.
