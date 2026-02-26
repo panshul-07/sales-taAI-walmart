@@ -385,6 +385,12 @@ def _detect_language(text: str) -> str:
 
 def _classify_intent(text: str) -> str:
     q = text.lower()
+    if any(k in q for k in ["kurtosis", "jarque", "jb", "skewness", "distribution", "normality"]):
+        return "distribution_diagnostics"
+    if any(k in q for k in ["policy", "recommend", "advice", "action plan", "what should", "improve sales", "strategy"]):
+        return "policy_advice"
+    if any(k in q for k in ["store profile", "store summary", "all about store", "everything about store"]):
+        return "store_profile"
     if any(k in q for k in ["highest", "maximum", "max", "peak", "lowest", "minimum", "min"]):
         return "extrema_analysis"
     if any(k in q for k in ["when", "date", "which week"]):
@@ -404,6 +410,9 @@ def _classify_intent(text: str) -> str:
 
 def _confidence_for_intent(intent: str) -> float:
     mapping = {
+        "distribution_diagnostics": 0.94,
+        "policy_advice": 0.82,
+        "store_profile": 0.90,
         "extrema_analysis": 0.93,
         "date_lookup": 0.90,
         "causal_analysis": 0.78,
@@ -512,6 +521,23 @@ def _extract_store_hint(q: str) -> int | None:
         return int(m.group(1))
     except ValueError:
         return None
+
+
+def _extract_store_pair(q: str) -> tuple[int, int] | None:
+    ql = q.lower()
+    m = re.search(r"store\s*(\d+)\s*(?:vs|versus)\s*store\s*(\d+)", ql)
+    if m:
+        try:
+            return int(m.group(1)), int(m.group(2))
+        except ValueError:
+            return None
+    m = re.search(r"\b(\d+)\s*(?:vs|versus)\s*(\d+)\b", ql)
+    if m:
+        try:
+            return int(m.group(1)), int(m.group(2))
+        except ValueError:
+            return None
+    return None
 
 
 def _store_rankings() -> list[tuple[int, float]]:
@@ -656,6 +682,14 @@ def _contextualize_question(message: str, history: list[dict[str, str]]) -> str:
     msg = message.strip()
     if len(msg.split()) >= 4:
         return msg
+    if any(
+        k in msg.lower()
+        for k in [
+            "kurtosis", "skewness", "jarque", "jb", "policy", "advice", "forecast", "predict",
+            "store", "coefficient", "anomaly", "distribution",
+        ]
+    ):
+        return msg
     prev_users = [m["content"] for m in history if m.get("role") == "user"]
     if not prev_users:
         return msg
@@ -745,6 +779,7 @@ def _economic_answer(message: str) -> str:
 def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> str:
     q = _contextualize_question(message, history).lower()
     store_hint = _extract_store_hint(q)
+    store_pair = _extract_store_pair(q)
     data_scope = str(store_hint) if store_hint else "all"
     rows = _filtered_rows(data_scope, 160)
 
@@ -763,12 +798,100 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
         else 0.0
     )
     weeks = _extract_weeks_window(q, default=52)
+    scope_label = f"Store {store_hint}" if store_hint else "All Stores"
+
+    if any(k in q for k in ["kurtosis", "skewness", "jarque", "jb", "distribution", "normality"]):
+        ds = distribution_stats(data_scope, min(weeks, 160))
+        return (
+            f"Distribution diagnostics ({scope_label}, last {ds['weeks']} weeks):\n"
+            f"- Series: {ds.get('series', 'sales')}\n"
+            f"- Skewness: {float(ds.get('skewness', 0.0)):.4f}\n"
+            f"- Kurtosis (Pearson): {float(ds.get('kurtosis_pearson', 0.0)):.4f}\n"
+            f"- Jarque-Bera: {float(ds.get('jarque_bera_stat', 0.0)):.6f}\n"
+            f"- JB p-value: {float(ds.get('jarque_bera_pvalue', 1.0)):.4g}\n"
+            f"- Normality rejected @5%: {'Yes' if ds.get('normality_rejected_5pct') else 'No'}"
+        )
+
+    if store_pair and any(k in q for k in ["vs", "versus", "compare"]):
+        a, b = store_pair
+        ra = _filtered_rows(str(a), 160)
+        rb = _filtered_rows(str(b), 160)
+        sa = [float(x["Weekly_Sales"]) for x in ra]
+        sb = [float(x["Weekly_Sales"]) for x in rb]
+        pa = [float(x["Predicted_Sales"]) for x in ra]
+        pb = [float(x["Predicted_Sales"]) for x in rb]
+        avg_a = mean(sa) if sa else 0.0
+        avg_b = mean(sb) if sb else 0.0
+        peak_a = max(sa) if sa else 0.0
+        peak_b = max(sb) if sb else 0.0
+        gap = ((avg_a - avg_b) / max(avg_b, 1.0)) * 100.0
+        trend_a, trend_pct_a = _trend_direction(ra)
+        trend_b, trend_pct_b = _trend_direction(rb)
+        return (
+            f"Store {a} vs Store {b} (last 160 weeks):\n"
+            f"- Avg sales: Store {a} = {avg_a:,.0f}, Store {b} = {avg_b:,.0f} (gap {gap:+.2f}%)\n"
+            f"- Peak sales: Store {a} = {peak_a:,.0f}, Store {b} = {peak_b:,.0f}\n"
+            f"- Trend: Store {a} {trend_a} ({trend_pct_a:+.2f}%), Store {b} {trend_b} ({trend_pct_b:+.2f}%)\n"
+            f"- Baseline gap: Store {a} {((mean(pa)-avg_a)/max(avg_a,1.0))*100:+.2f}% | "
+            f"Store {b} {((mean(pb)-avg_b)/max(avg_b,1.0))*100:+.2f}%"
+        )
+
+    if store_hint and any(k in q for k in ["all about", "everything", "full", "complete", "summary", "profile"]):
+        store_rows = _filtered_rows(str(store_hint), 160)
+        store_peak = max(store_rows, key=lambda r: float(r["Weekly_Sales"]))
+        store_low = min(store_rows, key=lambda r: float(r["Weekly_Sales"]))
+        store_sales = [float(r["Weekly_Sales"]) for r in store_rows]
+        store_preds = [float(r["Predicted_Sales"]) for r in store_rows]
+        st_trend, st_trend_pct = _trend_direction(store_rows)
+        st_holiday = [float(r["Weekly_Sales"]) for r in store_rows if int(r["Holiday_Flag"]) == 1]
+        st_non_holiday = [float(r["Weekly_Sales"]) for r in store_rows if int(r["Holiday_Flag"]) == 0]
+        st_lift = (
+            ((mean(st_holiday) - mean(st_non_holiday)) / max(mean(st_non_holiday), 1.0)) * 100.0
+            if st_holiday and st_non_holiday
+            else 0.0
+        )
+        coef_rows = coefficients(str(store_hint), 160).get("rows", [])
+        sig = [r for r in coef_rows if bool(r.get("significant_5pct"))]
+        top_sig = ", ".join([f"{r['feature']} (p={float(r['p_value']):.3g})" for r in sig[:3]]) if sig else "none at 5%"
+        return (
+            f"{scope_label} profile:\n"
+            f"- Date window: {store_rows[0]['Date']} to {store_rows[-1]['Date']} ({len(store_rows)} weeks)\n"
+            f"- Avg actual: {mean(store_sales):,.0f} | Avg baseline: {mean(store_preds):,.0f}\n"
+            f"- Peak week: {store_peak['Date']} ({float(store_peak['Weekly_Sales']):,.0f})\n"
+            f"- Lowest week: {store_low['Date']} ({float(store_low['Weekly_Sales']):,.0f})\n"
+            f"- Trend direction: {st_trend} ({st_trend_pct:+.2f}%)\n"
+            f"- Holiday lift: {st_lift:+.2f}%\n"
+            f"- Significant model factors: {top_sig}"
+        )
+
+    if any(k in q for k in ["policy", "recommend", "advice", "action plan", "what should", "improve sales", "strategy"]):
+        coef_rows = coefficients(data_scope, 160).get("rows", [])
+        ranked = sorted(coef_rows, key=lambda r: abs(float(r.get("impact_pct_10", 0.0))), reverse=True)
+        top = ranked[:2]
+        driver_text = ", ".join([f"{r['feature']} ({float(r.get('impact_pct_10', 0.0)):+.2f}% @ +10%)" for r in top]) if top else "No strong factor signal"
+        gap_pct = ((avg_pred - avg_sales) / max(avg_sales, 1.0)) * 100.0
+        actions = [
+            "Operational: increase inventory/staffing in weeks flagged as holiday or pre-holiday peaks.",
+            "Pricing: run controlled discount tests only in low-demand windows and track margin impact weekly.",
+            "Demand monitoring: set anomaly alerts on residual spikes for early intervention.",
+        ]
+        if trend == "downward":
+            actions.insert(0, "Recovery: launch 4-week corrective plan for underperforming categories/stores.")
+        return (
+            f"Policy guidance ({scope_label}):\n"
+            f"- Current trend: {trend} ({trend_pct:+.2f}%)\n"
+            f"- Baseline gap vs actual: {gap_pct:+.2f}%\n"
+            f"- Top quantified drivers: {driver_text}\n"
+            "- Recommended actions:\n"
+            + "\n".join([f"  {i+1}. {a}" for i, a in enumerate(actions[:4])])
+            + "\n- Ask next: 'give me policy advice for Store 12' or 'forecast next quarter for Store 7'."
+        )
 
     if _is_graph_request(q):
         metric = _chart_metric_key(q)
         metric_label = "residual (actual - baseline)" if metric == "Residual" else ("predicted sales" if metric == "Predicted_Sales" else "actual sales vs baseline")
         return (
-            f"Generated chart for {'Store ' + str(store_hint) if store_hint else 'All Stores'} using the last {weeks} weeks.\n"
+            f"Generated chart for {scope_label} using the last {weeks} weeks.\n"
             f"- Metric: {metric_label}\n"
             "- You can refine with: 'graph store 10 for 12 weeks', 'plot forecast for 3 months', or 'chart residual for 20 weeks'."
         )
@@ -823,6 +946,18 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
             f"- Baseline prediction: {float(peak_row['Predicted_Sales']):,.0f}"
         )
 
+    if any(k in q for k in ["each store", "every store", "all stores ranking", "all store ranking"]):
+        ranked = _store_rankings()
+        top10 = ranked[:10]
+        bottom5 = ranked[-5:]
+        return (
+            "All-store performance snapshot:\n"
+            + "\n".join([f"- Top {i+1}: Store {sid} ({val:,.0f})" for i, (sid, val) in enumerate(top10)])
+            + "\n"
+            + "\n".join([f"- Bottom {len(bottom5)-i}: Store {sid} ({val:,.0f})" for i, (sid, val) in enumerate(bottom5)])
+            + "\nAsk: 'all about store <id>' for full store profile."
+        )
+
     if any(k in q for k in ["top", "rank", "best stores", "compare stores"]):
         n = _extract_top_n(q, default=5)
         top = _store_rankings()[:n]
@@ -863,7 +998,7 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
         optimistic = avg_pred * 1.06
         pessimistic = avg_pred * 0.94
         return (
-            "3-scenario forecast (based on baseline model):\n"
+            f"3-scenario forecast ({scope_label}, baseline model):\n"
             f"- Base: {avg_pred:,.0f}\n"
             f"- Optimistic (+6%): {optimistic:,.0f}\n"
             f"- Pessimistic (-6%): {pessimistic:,.0f}\n"
