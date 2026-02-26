@@ -45,6 +45,8 @@ class ChatResponse(BaseModel):
     answer: str
     detected_language: str
     sources: list[str]
+    intent: str | None = None
+    confidence: float | None = None
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -110,6 +112,14 @@ def _list_chat_sessions(limit: int = 20) -> list[dict[str, Any]]:
             (max(1, limit),),
         ).fetchall()
     return [{"session_id": str(r["session_id"]), "last_at": str(r["last_at"]), "preview": str(r["preview"] or "")} for r in rows]
+
+
+KNOWLEDGE_SNIPPETS: list[dict[str, str]] = [
+    {"topic": "elasticity", "text": "Price/income/feature elasticities describe percentage sensitivity in demand outcomes."},
+    {"topic": "causal", "text": "Correlation is not causation; causal claims need counterfactual checks and confounder control."},
+    {"topic": "forecast", "text": "Scenario forecasting should provide base, optimistic, and pessimistic cases with explicit assumptions."},
+    {"topic": "anomaly", "text": "Anomaly detection highlights unusual observations; interpretation must separate event effects from noise."},
+]
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float:
@@ -249,15 +259,82 @@ def _detect_language(text: str) -> str:
     return "english"
 
 
+def _classify_intent(text: str) -> str:
+    q = text.lower()
+    if any(k in q for k in ["why", "cause", "reason", "drop", "decline", "impact"]):
+        return "causal_analysis"
+    if any(k in q for k in ["forecast", "predict", "scenario", "next", "future"]):
+        return "forecasting"
+    if any(k in q for k in ["compare", "vs", "versus", "top", "best", "store"]):
+        return "comparative_analysis"
+    if any(k in q for k in ["coefficient", "beta", "corr", "correlation", "elasticity"]):
+        return "model_interpretation"
+    if any(k in q for k in ["anomaly", "unusual", "outlier", "spike"]):
+        return "anomaly_analysis"
+    return "general_metrics"
+
+
+def _confidence_for_intent(intent: str) -> float:
+    mapping = {
+        "causal_analysis": 0.78,
+        "forecasting": 0.84,
+        "comparative_analysis": 0.88,
+        "model_interpretation": 0.90,
+        "anomaly_analysis": 0.80,
+        "general_metrics": 0.86,
+    }
+    return float(mapping.get(intent, 0.75))
+
+
+def _retrieve_knowledge(text: str, k: int = 2) -> list[str]:
+    q = text.lower()
+    scored: list[tuple[int, str]] = []
+    for s in KNOWLEDGE_SNIPPETS:
+        score = 0
+        if s["topic"] in q:
+            score += 2
+        for token in s["text"].lower().split():
+            if token in q:
+                score += 1
+        scored.append((score, s["text"]))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    picked = [txt for sc, txt in scored if sc > 0][:k]
+    if not picked:
+        picked = [KNOWLEDGE_SNIPPETS[0]["text"]]
+    return picked
+
+
+def _analysis_snapshot(store: str = "all", weeks: int = 160) -> dict[str, Any]:
+    rows = _filtered_rows(store, weeks)
+    sales = [float(r["Weekly_Sales"]) for r in rows]
+    preds = [float(r["Predicted_Sales"]) for r in rows]
+    if not sales:
+        return {"avg_sales": 0.0, "avg_pred": 0.0, "residual_mean": 0.0, "residual_std": 0.0, "anomaly_count": 0}
+    avg_sales = mean(sales)
+    avg_pred = mean(preds)
+    residuals = [abs(a - p) for a, p in zip(sales, preds)]
+    res_mean = mean(residuals)
+    res_std = _std(residuals)
+    anomaly_count = sum(1 for r in residuals if r > res_mean + 2 * res_std) if res_std > 0 else 0
+    return {
+        "avg_sales": round(avg_sales, 2),
+        "avg_pred": round(avg_pred, 2),
+        "residual_mean": round(res_mean, 2),
+        "residual_std": round(res_std, 2),
+        "anomaly_count": int(anomaly_count),
+    }
+
+
 def _economic_answer(message: str) -> str:
     q = message.lower()
+    intent = _classify_intent(message)
     rows = _filtered_rows("all", 160)
     avg_sales = mean([float(r["Weekly_Sales"]) for r in rows])
     peak_sales = max([float(r["Weekly_Sales"]) for r in rows])
     pred_avg = mean([float(r["Predicted_Sales"]) for r in rows])
     pred_gap_pct = ((pred_avg - avg_sales) / max(avg_sales, 1.0)) * 100.0
 
-    if any(k in q for k in ["why", "drop", "fall", "decline", "cause", "reason", "impact"]):
+    if intent == "causal_analysis":
         ranked = sorted(
             [(f, abs(float(MODEL_COEFFICIENTS.get(f, 0.0)))) for f in FEATURES],
             key=lambda x: x[1],
@@ -271,14 +348,14 @@ def _economic_answer(message: str) -> str:
             "- Use What-If sliders to test counterfactual scenarios."
         )
 
-    if "coefficient" in q or "beta" in q:
+    if intent == "model_interpretation":
         return "\n".join(
             [
                 "Notebook-linked coefficients currently used:",
                 *[f"- {f}: {float(MODEL_COEFFICIENTS.get(f, 0.0)):.4f}" for f in FEATURES],
             ]
         )
-    if any(k in q for k in ["forecast", "predict", "scenario"]):
+    if intent == "forecasting":
         optimistic = pred_avg * 1.06
         pessimistic = pred_avg * 0.94
         return (
@@ -288,7 +365,7 @@ def _economic_answer(message: str) -> str:
             f"- Pessimistic (-6%): {pessimistic:,.0f}\n"
             f"- Baseline gap vs actual: {pred_gap_pct:+.2f}%"
         )
-    if any(k in q for k in ["compare", "store", "best", "top"]):
+    if intent == "comparative_analysis":
         grouped: dict[int, list[dict[str, Any]]] = {}
         for r in MODEL_ROWS:
             grouped.setdefault(int(r["Store"]), []).append(r)
@@ -298,9 +375,18 @@ def _economic_answer(message: str) -> str:
             reverse=True,
         )[:3]
         return "Top stores by avg weekly sales: " + ", ".join([f"Store {sid} ({val:,.0f})" for sid, val in top])
+    if intent == "anomaly_analysis":
+        snap = _analysis_snapshot("all", 160)
+        return (
+            "Anomaly scan summary:\n"
+            f"- Estimated anomaly weeks: {snap['anomaly_count']}\n"
+            f"- Mean absolute residual: {snap['residual_mean']:,.0f}\n"
+            f"- Residual volatility: {snap['residual_std']:,.0f}\n"
+            "- Review high-residual periods and holiday/context events for root-cause validation."
+        )
     return (
         f"Current aggregate metrics: avg weekly sales {avg_sales:,.0f}, peak {peak_sales:,.0f}, baseline prediction avg {pred_avg:,.0f}. "
-        "Ask for forecast scenarios, coefficient interpretation, causal diagnostics, or store comparisons."
+        "Ask for forecast scenarios, coefficient interpretation, causal diagnostics, anomaly scan, or store comparisons."
     )
 
 
@@ -336,10 +422,18 @@ def _call_llm_with_grounding(user_message: str, language: str, history: list[dic
     else:
         system_prompt += " Reply in English."
 
+    intent = _classify_intent(user_message)
     context = _grounding_context()
+    knowledge = "\n".join([f"- {x}" for x in _retrieve_knowledge(user_message, k=2)])
     recent = history[-8:]
     transcript = "\n".join([f"{m['role']}: {m['content']}" for m in recent])
-    combined_user = f"Context:\n{context}\n\nConversation:\n{transcript}\n\nCurrent user question:\n{user_message}"
+    combined_user = (
+        f"Intent: {intent}\n"
+        f"Context:\n{context}\n\n"
+        f"Relevant economics snippets:\n{knowledge}\n\n"
+        f"Conversation:\n{transcript}\n\n"
+        f"Current user question:\n{user_message}"
+    )
 
     payload = {
         "model": model,
@@ -507,6 +601,8 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
     history = _load_chat_messages(session_id, limit=24)
 
     lang = _detect_language(msg)
+    intent = _classify_intent(msg)
+    confidence = _confidence_for_intent(intent)
     llm_answer = _call_llm_with_grounding(msg, lang, history)
     if llm_answer:
         answer = llm_answer
@@ -528,6 +624,8 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
         answer=answer,
         detected_language=lang,
         sources=["walmart_sales_forecasting.ipynb", "extra_trees_notebook.pkl", source_tag],
+        intent=intent,
+        confidence=confidence,
     )
 
 
@@ -539,6 +637,32 @@ def taai_session(session_id: str) -> dict[str, Any]:
 @app.get("/api/taai/sessions")
 def taai_sessions(limit: int = 20) -> dict[str, Any]:
     return {"sessions": _list_chat_sessions(limit=limit)}
+
+
+@app.get("/api/taai/suggestions")
+def taai_suggestions() -> dict[str, Any]:
+    return {
+        "suggestions": [
+            "Give me a 3-scenario forecast summary for next quarter.",
+            "Why did sales drop recently? Show probable drivers.",
+            "Compare top 3 stores by average weekly sales.",
+            "Explain CPI and fuel price coefficients in simple terms.",
+            "Run anomaly scan and summarize unusual weeks.",
+        ]
+    }
+
+
+@app.get("/api/taai/insights")
+def taai_insights(store: str = "all", weeks: int = 160) -> dict[str, Any]:
+    snap = _analysis_snapshot(store, weeks)
+    coeff = {f: round(float(MODEL_COEFFICIENTS.get(f, 0.0)), 4) for f in FEATURES}
+    return {
+        "store": store,
+        "weeks": weeks,
+        "snapshot": snap,
+        "coefficients": coeff,
+        "model_source": MODEL_INFO.get("model_source", "unknown"),
+    }
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

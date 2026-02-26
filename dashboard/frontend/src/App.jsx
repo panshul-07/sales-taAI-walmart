@@ -44,6 +44,8 @@ export default function App() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatMessages, setChatMessages] = useState([{ role: 'assistant', content: 'taAI ready. Ask economic questions about the data.' }]);
   const [chatSessions, setChatSessions] = useState([]);
+  const [chatSuggestions, setChatSuggestions] = useState([]);
+  const [insights, setInsights] = useState(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -102,6 +104,12 @@ export default function App() {
     setCoef(cf.rows || []);
     const label = cf.model_source === 'extra_trees_notebook_pickle' ? 'Notebook ExtraTrees predictions + notebook coefficients' : 'Model loaded';
     setStatus(`Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max}) | ${label}`);
+    try {
+      const ins = await api(`/api/taai/insights?${q}`);
+      setInsights(ins);
+    } catch {
+      setInsights(null);
+    }
   }
 
   async function loadChatSessions() {
@@ -110,6 +118,15 @@ export default function App() {
       setChatSessions(res.sessions || []);
     } catch {
       setChatSessions([]);
+    }
+  }
+
+  async function loadChatSuggestions() {
+    try {
+      const res = await api('/api/taai/suggestions');
+      setChatSuggestions(Array.isArray(res.suggestions) ? res.suggestions : []);
+    } catch {
+      setChatSuggestions([]);
     }
   }
 
@@ -140,7 +157,12 @@ export default function App() {
       setChatMessages((m) => {
         const next = [...m];
         if (next.length && next[next.length - 1].content === 'Analyzing…') next.pop();
-        next.push({ role: 'assistant', content: res.answer || 'No response' });
+        next.push({
+          role: 'assistant',
+          content: res.answer || 'No response',
+          intent: res.intent || null,
+          confidence: Number(res.confidence || 0),
+        });
         return next;
       });
       loadChatSessions();
@@ -163,6 +185,7 @@ export default function App() {
 
   useEffect(() => {
     loadChatSessions();
+    loadChatSuggestions();
     if (chatSessionId) loadChatSession(chatSessionId).catch(() => {});
   }, []);
 
@@ -242,6 +265,12 @@ export default function App() {
                 </div>
               ))}
             </div>
+            <div className="insightBox">
+              <div className="mini">taAI insight snapshot (current filter)</div>
+              <div className="mini">Avg actual: {money(insights?.snapshot?.avg_sales || 0)} | Avg predicted: {money(insights?.snapshot?.avg_pred || 0)}</div>
+              <div className="mini">Residual mean: {compact(insights?.snapshot?.residual_mean || 0)} | Residual std: {compact(insights?.snapshot?.residual_std || 0)}</div>
+              <div className="mini">Estimated anomaly weeks: {Number(insights?.snapshot?.anomaly_count || 0)}</div>
+            </div>
           </div>
         </div>
 
@@ -289,12 +318,26 @@ export default function App() {
           </div>
         </div>
         <div className="chatBody">
-          {chatMessages.map((m, i) => <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>{m.content}</div>)}
+          {chatMessages.map((m, i) => (
+            <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>
+              {m.content}
+              {m.role !== 'user' && m.intent && (
+                <div className="msgMeta">
+                  <span>{String(m.intent).replaceAll('_', ' ')}</span>
+                  <span>{Math.round(Number(m.confidence || 0) * 100)}% confidence</span>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
         <div className="chatQuick">
-          <button className="quickBtn" onClick={() => sendChat('Give me a 3-scenario forecast summary')}>3-scenario forecast</button>
-          <button className="quickBtn" onClick={() => sendChat('Why did sales drop? Give main drivers')}>Why did sales drop?</button>
-          <button className="quickBtn" onClick={() => sendChat('Explain coefficients in simple terms')}>Explain coefficients</button>
+          {(chatSuggestions.length ? chatSuggestions.slice(0, 3) : [
+            'Give me a 3-scenario forecast summary',
+            'Why did sales drop? Give main drivers',
+            'Explain coefficients in simple terms',
+          ]).map((q) => (
+            <button className="quickBtn" key={q} onClick={() => sendChat(q)}>{q}</button>
+          ))}
         </div>
         <div className="chatSessions">
           {chatSessions.length === 0 ? <div className="mini">No previous chats.</div> : chatSessions.map((s) => (
