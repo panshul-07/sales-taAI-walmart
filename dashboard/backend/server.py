@@ -381,6 +381,45 @@ def _extract_top_n(q: str, default: int = 3) -> int:
     return default
 
 
+def _extract_weeks_window(q: str, default: int = 52) -> int:
+    ql = q.lower()
+    m = re.search(r"\b(\d+)\s*week", ql)
+    if m:
+        try:
+            return max(3, min(260, int(m.group(1))))
+        except ValueError:
+            return default
+    m = re.search(r"\b(\d+)\s*month", ql)
+    if m:
+        try:
+            return max(4, min(260, int(m.group(1)) * 4))
+        except ValueError:
+            return default
+    m = re.search(r"\b(\d+)\s*year", ql)
+    if m:
+        try:
+            return max(8, min(260, int(m.group(1)) * 52))
+        except ValueError:
+            return default
+    if "last quarter" in ql or "next quarter" in ql:
+        return 13
+    return default
+
+
+def _is_graph_request(q: str) -> bool:
+    ql = q.lower()
+    return any(k in ql for k in ["graph", "plot", "chart", "visual", "draw", "show trend", "line graph"])
+
+
+def _chart_metric_key(q: str) -> str:
+    ql = q.lower()
+    if any(k in ql for k in ["pred", "forecast", "baseline"]):
+        return "Predicted_Sales"
+    if any(k in ql for k in ["residual", "error", "delta"]):
+        return "Residual"
+    return "Weekly_Sales"
+
+
 def _extract_store_hint(q: str) -> int | None:
     m = re.search(r"\bstore\s*(\d+)\b", q.lower())
     if not m:
@@ -406,26 +445,50 @@ def _build_chat_charts(message: str, history: list[dict[str, str]]) -> list[dict
     q = _contextualize_question(message, history).lower()
     store_hint = _extract_store_hint(q)
     data_scope = str(store_hint) if store_hint else "all"
-    rows = _filtered_rows(data_scope, 160)
+    weeks = _extract_weeks_window(q, default=52)
+    rows = _filtered_rows(data_scope, weeks)
     charts: list[dict[str, Any]] = []
+    metric = _chart_metric_key(q)
 
     # Always give a compact trend chart when asking sales/timing/forecast style questions.
-    if any(k in q for k in ["sales", "trend", "highest", "lowest", "forecast", "predict", "week", "month"]):
-        trend_rows = rows[-52:]
+    if _is_graph_request(q) or any(k in q for k in ["sales", "trend", "highest", "lowest", "forecast", "predict", "week", "month"]):
+        trend_rows = rows[-weeks:]
+        if metric == "Residual":
+            data = [
+                {
+                    "Date": r["Date"],
+                    "Residual": float(r["Weekly_Sales"]) - float(r["Predicted_Sales"]),
+                }
+                for r in trend_rows
+            ]
+            ys = ["Residual"]
+        elif metric == "Predicted_Sales":
+            data = [
+                {
+                    "Date": r["Date"],
+                    "Predicted": float(r["Predicted_Sales"]),
+                    "Actual": float(r["Weekly_Sales"]),
+                }
+                for r in trend_rows
+            ]
+            ys = ["Predicted", "Actual"]
+        else:
+            data = [
+                {
+                    "Date": r["Date"],
+                    "Actual": float(r["Weekly_Sales"]),
+                    "Baseline": float(r["Predicted_Sales"]),
+                }
+                for r in trend_rows
+            ]
+            ys = ["Actual", "Baseline"]
         charts.append(
             {
                 "type": "line",
-                "title": f"{'Store ' + str(store_hint) if store_hint else 'All Stores'}: Weekly Sales Trend",
+                "title": f"{'Store ' + str(store_hint) if store_hint else 'All Stores'}: {weeks}-Week Trend",
                 "x": "Date",
-                "ys": ["Actual", "Baseline"],
-                "data": [
-                    {
-                        "Date": r["Date"],
-                        "Actual": float(r["Weekly_Sales"]),
-                        "Baseline": float(r["Predicted_Sales"]),
-                    }
-                    for r in trend_rows
-                ],
+                "ys": ys,
+                "data": data,
             }
         )
 
@@ -615,6 +678,16 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
         if holidays and non_holidays
         else 0.0
     )
+    weeks = _extract_weeks_window(q, default=52)
+
+    if _is_graph_request(q):
+        metric = _chart_metric_key(q)
+        metric_label = "residual (actual - baseline)" if metric == "Residual" else ("predicted sales" if metric == "Predicted_Sales" else "actual sales vs baseline")
+        return (
+            f"Generated chart for {'Store ' + str(store_hint) if store_hint else 'All Stores'} using the last {weeks} weeks.\n"
+            f"- Metric: {metric_label}\n"
+            "- You can refine with: 'graph store 10 for 12 weeks', 'plot forecast for 3 months', or 'chart residual for 20 weeks'."
+        )
 
     if any(k in q for k in ["who made", "who built", "creator", "developers", "made this bot"]):
         return (
@@ -640,6 +713,14 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
             "- Trend direction and magnitude\n"
             "- Holiday lift vs non-holiday weeks\n"
             "- Coefficient interpretation and scenario impact"
+        )
+
+    if any(k in q for k in ["highest and lowest", "lowest and highest", "high and low", "min and max"]):
+        return (
+            f"Extrema summary ({'Store ' + str(store_hint) if store_hint else 'All Stores'}):\n"
+            f"- Highest week: {peak_row['Date']} ({float(peak_row['Weekly_Sales']):,.0f})\n"
+            f"- Lowest week: {low_row['Date']} ({float(low_row['Weekly_Sales']):,.0f})\n"
+            f"- Window analyzed: {len(rows)} weeks"
         )
 
     if any(k in q for k in ["lowest", "minimum", "worst week"]):

@@ -287,8 +287,8 @@ export default function App() {
         <div className="panel inlineChat">
           <div className="chatHead">
             <div>
-              <div className="chatTitle">taAI Economist Assistant</div>
-              <div className="mini">Ask anything about sales, stores, model coefficients, creators, and dataset sources.</div>
+              <div className="chatTitle">taAI MathBox</div>
+              <div className="mini">Open-ended project assistant. Ask any question and request charts directly (example: graph for 3 weeks).</div>
             </div>
             <div className="chatHeadBtns">
               <button className="quickBtn" onClick={() => { setChatSessionId(''); localStorage.removeItem('taai_session_id'); setChatMessages([{ role: 'assistant', content: 'New chat started.' }]); }}>New</button>
