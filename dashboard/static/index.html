@@ -181,6 +181,7 @@
         padding: 10px 12px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
+      .chatHeadBtns { display:flex; gap:6px; }
       .chatBody {
         overflow-y: auto;
         padding: 10px;
@@ -212,6 +213,14 @@
         flex-wrap: wrap;
         padding: 8px 10px;
         border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .chatSessions {
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 8px 10px;
+        display: grid;
+        gap: 6px;
+        max-height: 96px;
+        overflow-y: auto;
       }
       .quickBtn {
         font-size: 11px;
@@ -368,7 +377,10 @@
           <div style="font-weight:700;">taAI Economist Assistant</div>
           <div class="mini">Hinglish/English financial analysis</div>
         </div>
-        <button id="chatClose" class="quickBtn" type="button">Close</button>
+        <div class="chatHeadBtns">
+          <button id="chatNew" class="quickBtn" type="button">New</button>
+          <button id="chatClose" class="quickBtn" type="button">Close</button>
+        </div>
       </div>
       <div id="chatBody" class="chatBody">
         <div class="msg bot">taAI is ready. Ask anything about forecast, causality, coefficients, or store comparisons.</div>
@@ -378,6 +390,7 @@
         <button class="quickBtn" data-prompt="Why did sales drop? Give main drivers">Why did sales drop?</button>
         <button class="quickBtn" data-prompt="Explain coefficients in simple terms">Explain coefficients</button>
       </div>
+      <div id="chatSessions" class="chatSessions"></div>
       <div class="chatInput">
         <input id="chatText" type="text" placeholder="Ask taAI..." />
         <button id="chatSend" type="button">Send</button>
@@ -431,6 +444,53 @@
         body.scrollTop = body.scrollHeight;
       }
 
+      function resetChatUI() {
+        const body = document.getElementById("chatBody");
+        body.innerHTML = "";
+        appendChat("bot", "taAI is ready. Ask anything about forecast, causality, coefficients, or store comparisons.");
+      }
+
+      async function loadChatSessions() {
+        const host = document.getElementById("chatSessions");
+        host.innerHTML = "";
+        try {
+          const res = await api("/api/taai/sessions?limit=10");
+          const sessions = res.sessions || [];
+          if (!sessions.length) {
+            host.innerHTML = '<div class="mini">No previous chats yet.</div>';
+            return;
+          }
+          for (const s of sessions) {
+            const b = document.createElement("button");
+            b.className = "quickBtn";
+            b.textContent = s.preview || s.session_id.slice(0, 8);
+            b.onclick = () => loadChatSessionById(s.session_id);
+            host.appendChild(b);
+          }
+        } catch (_) {
+          host.innerHTML = '<div class="mini">Unable to load chat history.</div>';
+        }
+      }
+
+      async function loadChatSessionById(sessionId) {
+        if (!sessionId) return;
+        try {
+          const res = await api(`/api/taai/sessions/${encodeURIComponent(sessionId)}`);
+          state.chatSessionId = sessionId;
+          localStorage.setItem("taai_session_id", sessionId);
+          const body = document.getElementById("chatBody");
+          body.innerHTML = "";
+          const msgs = res.messages || [];
+          if (!msgs.length) {
+            appendChat("bot", "Loaded session has no messages yet.");
+            return;
+          }
+          for (const m of msgs) appendChat(m.role === "user" ? "user" : "bot", m.content || "");
+        } catch (err) {
+          appendChat("bot", `Could not load session: ${String(err)}`);
+        }
+      }
+
       function setChatOpen(open) {
         state.chatOpen = open;
         document.getElementById("chatPanel").classList.toggle("open", open);
@@ -456,6 +516,7 @@
           const body = document.getElementById("chatBody");
           if (body.lastElementChild && body.lastElementChild.textContent === "taAI is analyzing...") body.lastElementChild.remove();
           appendChat("bot", data.answer || "No response");
+          loadChatSessions();
         } catch (err) {
           const body = document.getElementById("chatBody");
           if (body.lastElementChild && body.lastElementChild.textContent === "taAI is analyzing...") body.lastElementChild.remove();
@@ -698,6 +759,11 @@
         document.getElementById("themeLight").onclick = () => setTheme("light");
         document.getElementById("chatFab").onclick = () => setChatOpen(!state.chatOpen);
         document.getElementById("chatClose").onclick = () => setChatOpen(false);
+        document.getElementById("chatNew").onclick = () => {
+          state.chatSessionId = "";
+          localStorage.removeItem("taai_session_id");
+          resetChatUI();
+        };
         document.getElementById("chatSend").onclick = () => {
           const i = document.getElementById("chatText");
           sendChatMessage(i.value);
@@ -713,6 +779,8 @@
         for (const btn of document.querySelectorAll(".quickBtn[data-prompt]")) {
           btn.onclick = () => sendChatMessage(btn.getAttribute("data-prompt"));
         }
+        await loadChatSessions();
+        if (state.chatSessionId) await loadChatSessionById(state.chatSessionId);
 
         document.getElementById("store").onchange = async (e) => {
           state.store = e.target.value;

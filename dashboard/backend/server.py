@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import math
+import json
+import os
 import pickle
+import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -20,6 +25,7 @@ from backend.train_notebook_artifact import FEATURES, ARTIFACT_PATH, load_csv_da
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = BASE_DIR / "static"
+CHAT_DB_PATH = BASE_DIR / "backend" / "taai_chat.db"
 
 MODEL_LOCK = threading.Lock()
 MODEL_ROWS: list[dict[str, Any]] = []
@@ -39,6 +45,71 @@ class ChatResponse(BaseModel):
     answer: str
     detected_language: str
     sources: list[str]
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(CHAT_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_chat_db() -> None:
+    CHAT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _db_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_session_created ON chat_messages(session_id, created_at)")
+        conn.commit()
+
+
+def _save_chat_message(session_id: str, role: str, content: str) -> None:
+    with _db_conn() as conn:
+        conn.execute(
+            "INSERT INTO chat_messages(session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (session_id, role, content, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def _load_chat_messages(session_id: str, limit: int = 24) -> list[dict[str, str]]:
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT role, content, created_at
+            FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (session_id, max(1, limit)),
+        ).fetchall()
+    out = [{"role": str(r["role"]), "content": str(r["content"]), "created_at": str(r["created_at"])} for r in reversed(rows)]
+    return out
+
+
+def _list_chat_sessions(limit: int = 20) -> list[dict[str, Any]]:
+    with _db_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT session_id, MAX(created_at) AS last_at,
+                   SUBSTR(MAX(CASE WHEN role='user' THEN content ELSE '' END), 1, 90) AS preview
+            FROM chat_messages
+            GROUP BY session_id
+            ORDER BY last_at DESC
+            LIMIT ?
+            """,
+            (max(1, limit),),
+        ).fetchall()
+    return [{"session_id": str(r["session_id"]), "last_at": str(r["last_at"]), "preview": str(r["preview"] or "")} for r in rows]
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float:
@@ -233,6 +304,82 @@ def _economic_answer(message: str) -> str:
     )
 
 
+def _grounding_context() -> str:
+    rows = _filtered_rows("all", 160)
+    sales = [float(r["Weekly_Sales"]) for r in rows]
+    preds = [float(r["Predicted_Sales"]) for r in rows]
+    avg_sales = mean(sales) if sales else 0.0
+    avg_pred = mean(preds) if preds else 0.0
+    coeff_lines = ", ".join([f"{f}={float(MODEL_COEFFICIENTS.get(f, 0.0)):.4f}" for f in FEATURES])
+    return (
+        f"Data window rows={len(rows)}, avg_sales={avg_sales:.2f}, avg_pred={avg_pred:.2f}. "
+        f"Model source={MODEL_INFO.get('model_source','unknown')}. Coefficients: {coeff_lines}. "
+        "All claims must be grounded in these values or explicit model caveats."
+    )
+
+
+def _call_llm_with_grounding(user_message: str, language: str, history: list[dict[str, str]]) -> str | None:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    system_prompt = (
+        "You are taAI, a Walmart financial economist assistant. "
+        "Respond with: 1) direct answer, 2) key drivers, 3) implication/recommendation. "
+        "Use concise, professional language. Do not invent data."
+    )
+    if language == "hinglish":
+        system_prompt += " Reply in Hinglish."
+    elif language == "hindi":
+        system_prompt += " Reply in Hindi."
+    else:
+        system_prompt += " Reply in English."
+
+    context = _grounding_context()
+    recent = history[-8:]
+    transcript = "\n".join([f"{m['role']}: {m['content']}" for m in recent])
+    combined_user = f"Context:\n{context}\n\nConversation:\n{transcript}\n\nCurrent user question:\n{user_message}"
+
+    payload = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+            {"role": "user", "content": [{"type": "input_text", "text": combined_user}]},
+        ],
+        "temperature": 0.2,
+        "max_output_tokens": 500,
+    }
+
+    req = urlrequest.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=25) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+    text = body.get("output_text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    output = body.get("output", [])
+    parts: list[str] = []
+    for item in output:
+        for c in item.get("content", []):
+            if c.get("type") == "output_text" and c.get("text"):
+                parts.append(str(c["text"]))
+    final = "\n".join(parts).strip()
+    return final or None
+
+
 app = FastAPI(title="Walmart Forecast API", version="6.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -245,6 +392,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup() -> None:
+    _init_chat_db()
     _refresh_model_state()
     _start_scheduler()
 
@@ -355,33 +503,42 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail="message is required")
 
     session_id = payload.session_id or str(uuid4())
-    history = CHAT_SESSIONS.setdefault(session_id, [])
-    history.append({"role": "user", "content": msg})
+    _save_chat_message(session_id, "user", msg)
+    history = _load_chat_messages(session_id, limit=24)
 
     lang = _detect_language(msg)
-    core = _economic_answer(msg)
-    if lang == "hinglish":
-        answer = f"taAI insight: {core}\nAgar chaho toh main detailed economic breakdown bhi de sakta hoon."
-    elif lang == "hindi":
-        answer = f"taAI विश्लेषण: {core}\nअगर चाहें तो मैं इसे चरण-दर-चरण और विस्तार से समझा सकता हूँ।"
+    llm_answer = _call_llm_with_grounding(msg, lang, history)
+    if llm_answer:
+        answer = llm_answer
+        source_tag = "openai_grounded"
     else:
-        answer = f"taAI insight: {core}"
+        core = _economic_answer(msg)
+        if lang == "hinglish":
+            answer = f"taAI insight: {core}\nAgar chaho toh main detailed economic breakdown bhi de sakta hoon."
+        elif lang == "hindi":
+            answer = f"taAI विश्लेषण: {core}\nअगर चाहें तो मैं इसे चरण-दर-चरण और विस्तार से समझा सकता हूँ।"
+        else:
+            answer = f"taAI insight: {core}"
+        source_tag = "rule_based_fallback"
 
-    history.append({"role": "assistant", "content": answer})
-    if len(history) > 16:
-        CHAT_SESSIONS[session_id] = history[-16:]
+    _save_chat_message(session_id, "assistant", answer)
 
     return ChatResponse(
         session_id=session_id,
         answer=answer,
         detected_language=lang,
-        sources=["walmart_sales_forecasting.ipynb", "extra_trees_notebook.pkl"],
+        sources=["walmart_sales_forecasting.ipynb", "extra_trees_notebook.pkl", source_tag],
     )
 
 
 @app.get("/api/taai/sessions/{session_id}")
 def taai_session(session_id: str) -> dict[str, Any]:
-    return {"session_id": session_id, "messages": CHAT_SESSIONS.get(session_id, [])}
+    return {"session_id": session_id, "messages": _load_chat_messages(session_id, limit=200)}
+
+
+@app.get("/api/taai/sessions")
+def taai_sessions(limit: int = 20) -> dict[str, Any]:
+    return {"sessions": _list_chat_sessions(limit=limit)}
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

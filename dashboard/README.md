@@ -36,6 +36,16 @@ Open: `http://127.0.0.1:8000`
 - `GET /api/coefficients?store=all&weeks=160`
 - `POST /api/taai/chat`
 - `GET /api/taai/sessions/{session_id}`
+- `GET /api/taai/sessions?limit=10`
+
+## Optional LLM Config (taAI Product Mode)
+
+Set these env vars on Render to enable grounded LLM responses:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (optional, default: `gpt-4o-mini`)
+
+Without API key, taAI falls back to built-in economist rules.
 
 ## Data Behavior
 
