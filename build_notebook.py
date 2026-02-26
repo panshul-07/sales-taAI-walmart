@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-nb_path = Path('/Users/panshulaj/Documents/sale forecasting/walmart_sales_forecasting.ipynb')
+PROJECT_ROOT = Path('/Users/panshulaj/Documents/front')
+nb_path = PROJECT_ROOT / 'walmart_sales_forecasting.ipynb'
 
 cells = []
 
@@ -75,8 +76,8 @@ plt.style.use('seaborn-v0_8')
 sns.set_context('notebook')
 RANDOM_STATE = 42
 
-DATA_PATH = Path('/Users/panshulaj/Documents/sales-forecasting-walmart/data/walmart_sales.csv')
-OUT_DIR = Path('/Users/panshulaj/Documents/sale forecasting/outputs')
+DATA_PATH = PROJECT_ROOT / 'dashboard' / 'data' / 'walmart_sales.csv'
+OUT_DIR = PROJECT_ROOT / 'outputs'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 print('HAS_XGB =', HAS_XGB)
@@ -87,7 +88,8 @@ code('''
 # Load and inspect data
 
 df = pd.read_csv(DATA_PATH)
-df['Date'] = pd.to_datetime(df['Date'])
+df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+df = df.dropna(subset=['Date']).copy()
 df = df.sort_values(['Store', 'Date']).reset_index(drop=True)
 
 print('Shape:', df.shape)

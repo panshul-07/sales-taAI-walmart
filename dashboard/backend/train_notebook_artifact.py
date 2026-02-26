@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import pickle
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 ARTIFACT_DIR = BASE_DIR / "backend" / "model_artifacts"
 ARTIFACT_PATH = ARTIFACT_DIR / "extra_trees_notebook.pkl"
 FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
+DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y", "%d/%m/%Y", "%m/%d/%Y")
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -66,29 +68,46 @@ def generate_demo_data() -> list[dict[str, Any]]:
     return rows
 
 
-def load_csv_data() -> list[dict[str, Any]]:
+def resolve_data_path() -> Path | None:
     candidates = [
-        Path(__import__("os").getenv("DATA_PATH", "")) if __import__("os").getenv("DATA_PATH") else None,
+        Path(os.getenv("DATA_PATH", "")) if os.getenv("DATA_PATH") else None,
         BASE_DIR / "data" / "walmart_sales.csv",
         BASE_DIR.parent / "data" / "walmart_sales.csv",
     ]
     for candidate in candidates:
-        if not candidate or not candidate.exists():
+        if candidate and candidate.exists():
+            return candidate
+    return None
+
+
+def _parse_date(value: Any) -> datetime | None:
+    d = str(value or "").strip()
+    if not d:
+        return None
+    try:
+        return datetime.fromisoformat(d)
+    except ValueError:
+        pass
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(d, fmt)
+        except ValueError:
             continue
+    return None
+
+
+def load_csv_data() -> list[dict[str, Any]]:
+    candidate = resolve_data_path()
+    if candidate and candidate.exists():
         rows: list[dict[str, Any]] = []
         with candidate.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for r in reader:
                 if not r:
                     continue
-                d = str(r.get("Date", "")).strip()
-                try:
-                    dt = datetime.fromisoformat(d)
-                except ValueError:
-                    try:
-                        dt = datetime.strptime(d, "%Y-%m-%d")
-                    except ValueError:
-                        continue
+                dt = _parse_date(r.get("Date"))
+                if dt is None:
+                    continue
                 row = {
                     "Store": _safe_int(r.get("Store")),
                     "Date": dt.strftime("%Y-%m-%d"),
@@ -161,8 +180,8 @@ def train_artifact() -> dict[str, Any]:
     )
 
     model = ExtraTreesRegressor(
-        n_estimators=900,
-        max_depth=20,
+        n_estimators=260,
+        max_depth=16,
         min_samples_leaf=4,
         min_samples_split=2,
         max_features=1.0,
@@ -201,7 +220,6 @@ def train_artifact() -> dict[str, Any]:
         "source": "extra_trees_notebook",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "feature_columns": feature_cols,
-        "pipeline": pipe,
         "pred_map": pred_map,
         "coef_table": coef_map,
         "feature_coefficients": feature_coef,

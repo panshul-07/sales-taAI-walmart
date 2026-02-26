@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.train_notebook_artifact import FEATURES, ARTIFACT_PATH, load_csv_data, train_artifact
+from backend.train_notebook_artifact import FEATURES, ARTIFACT_PATH, load_csv_data, resolve_data_path, train_artifact
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = BASE_DIR / "static"
@@ -172,6 +172,7 @@ def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict
     raw_rows = load_csv_data()
     artifact = _load_or_train_artifact()
     pred_map = artifact.get("pred_map", {})
+    src = resolve_data_path()
 
     rows: list[dict[str, Any]] = []
     for r in raw_rows:
@@ -190,6 +191,7 @@ def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict
         "coef_source": "walmart_sales_forecasting.ipynb demand-equation terms",
         "prediction_source": "walmart_sales_forecasting.ipynb ExtraTrees pipeline",
         "retrain_cron": "every_6_hours",
+        "data_source_csv": str(src) if src else "demo_generated_data",
     }
     return rows, coeffs, info
 

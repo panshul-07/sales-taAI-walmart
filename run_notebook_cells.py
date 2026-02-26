@@ -2,7 +2,7 @@ import json
 import traceback
 from pathlib import Path
 
-nb_path = Path('/Users/panshulaj/Documents/sale forecasting/walmart_sales_forecasting.ipynb')
+nb_path = Path('/Users/panshulaj/Documents/front/walmart_sales_forecasting.ipynb')
 nb = json.loads(nb_path.read_text(encoding='utf-8'))
 
 ctx = {'__name__': '__main__'}

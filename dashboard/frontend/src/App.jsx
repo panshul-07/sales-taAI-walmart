@@ -24,6 +24,43 @@ const api = (path, options) => fetch(path, options).then((r) => {
   if (!r.ok) throw new Error(`${path} failed`);
   return r.json();
 });
+const numericDomain = (values, minPad = 1, padRatio = 0.1) => {
+  const xs = values.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+  if (!xs.length) return [0, 1];
+  let min = Math.min(...xs);
+  let max = Math.max(...xs);
+  if (min === max) {
+    min -= minPad;
+    max += minPad;
+  } else {
+    const pad = Math.max(minPad, (max - min) * padRatio);
+    min -= pad;
+    max += pad;
+  }
+  return [min, max];
+};
+const fitLine = (points) => {
+  const xs = points.map((p) => Number(p.x)).filter((v) => Number.isFinite(v));
+  const ys = points.map((p) => Number(p.y)).filter((v) => Number.isFinite(v));
+  const n = Math.min(xs.length, ys.length);
+  if (n < 2) return { slope: 0, intercept: 0, corr: 0, r2: 0 };
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let cov = 0;
+  let vx = 0;
+  let vy = 0;
+  for (let i = 0; i < n; i += 1) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    cov += dx * dy;
+    vx += dx * dx;
+    vy += dy * dy;
+  }
+  const slope = vx ? cov / vx : 0;
+  const intercept = my - slope * mx;
+  const corr = (vx && vy) ? cov / Math.sqrt(vx * vy) : 0;
+  return { slope, intercept, corr, r2: corr * corr };
+};
 
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
@@ -82,8 +119,20 @@ export default function App() {
   const scatterData = useMemo(() => adjustedRows.map((r) => ({
     x: Number(r.Adjusted_Factor),
     y: Number(r.Simulated_Sales),
+    baseline: Number(r.Predicted_Sales),
+    actual: Number(r.Weekly_Sales),
+    date: r.Date,
     holiday: Number(r.Holiday_Flag) === 1,
   })), [adjustedRows]);
+  const scatterFit = useMemo(() => fitLine(scatterData), [scatterData]);
+  const [scatterXMin, scatterXMax] = useMemo(() => numericDomain(scatterData.map((d) => d.x), 0.5, 0.14), [scatterData]);
+  const [scatterYMin, scatterYMax] = useMemo(() => numericDomain(scatterData.map((d) => d.y), 1000, 0.12), [scatterData]);
+  const scatterTrend = useMemo(() => (
+    [
+      { x: scatterXMin, y: (scatterFit.slope * scatterXMin) + scatterFit.intercept },
+      { x: scatterXMax, y: (scatterFit.slope * scatterXMax) + scatterFit.intercept },
+    ]
+  ), [scatterXMin, scatterXMax, scatterFit]);
 
   const simulatedAvg = useMemo(() => adjustedRows.length ? adjustedRows.reduce((a, b) => a + Number(b.Simulated_Sales), 0) / adjustedRows.length : 0, [adjustedRows]);
 
@@ -195,7 +244,7 @@ export default function App() {
         <div className="head">
           <div>
             <h1>Walmart Forecast Dashboard</h1>
-            <div className="sub">Model-linked forecasting + what-if + taAI assistant</div>
+            <div className="sub">Model-linked forecasting with interactive economist-grade diagnostics</div>
           </div>
           <div className="panel themeSwitch">
             <span className="sub">Theme</span>
@@ -281,13 +330,21 @@ export default function App() {
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart>
                   <CartesianGrid stroke="rgba(255,255,255,.08)" />
-                  <XAxis type="number" dataKey="x" tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <YAxis type="number" dataKey="y" tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <Tooltip formatter={(v, n) => (n === 'y' ? money(v) : Number(v).toFixed(3))} />
-                  <Scatter data={scatterData.filter((d) => !d.holiday)} fill="#16b6ad" />
-                  <Scatter data={scatterData.filter((d) => d.holiday)} fill="#d6b25b" />
+                  <XAxis type="number" domain={[scatterXMin, scatterXMax]} dataKey="x" tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                  <YAxis type="number" domain={[scatterYMin, scatterYMax]} dataKey="y" tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                  <Tooltip
+                    formatter={(v, n) => (n === 'y' ? money(v) : Number(v).toFixed(3))}
+                    labelFormatter={() => factor}
+                    contentStyle={{ background: 'rgba(4, 23, 31, 0.95)', border: '1px solid rgba(176,210,214,.28)', borderRadius: 10 }}
+                  />
+                  <Scatter data={scatterData.filter((d) => !d.holiday)} name="Normal week" fill="#2ecdc4" />
+                  <Scatter data={scatterData.filter((d) => d.holiday)} name="Holiday week" fill="#f5c76e" />
+                  <Line type="linear" data={scatterTrend} dataKey="y" stroke="#8ddcff" dot={false} strokeWidth={2} isAnimationActive={false} />
                 </ScatterChart>
               </ResponsiveContainer>
+            </div>
+            <div className="mini scatterMeta">
+              Trend: y = {scatterFit.slope.toFixed(2)}x + {scatterFit.intercept.toFixed(0)} | corr = {scatterFit.corr.toFixed(3)} | R² = {scatterFit.r2.toFixed(3)}
             </div>
           </div>
 
