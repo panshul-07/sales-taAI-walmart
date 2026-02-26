@@ -3,28 +3,49 @@ from __future__ import annotations
 import csv
 import math
 import os
-from datetime import datetime, timedelta
+import pickle
+import re
+import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any
+from uuid import uuid4
 
+import numpy as np
+import pandas as pd
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-
-try:
-    import numpy as np
-    import pandas as pd
-    import statsmodels.formula.api as smf
-
-    HAS_NOTEBOOK_STACK = True
-except Exception:
-    HAS_NOTEBOOK_STACK = False
+from pydantic import BaseModel
+from sklearn.linear_model import LinearRegression
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = BASE_DIR / "static"
+MODEL_DIR = BASE_DIR / "backend" / "model_artifacts"
+MODEL_PATH = MODEL_DIR / "sales_log_linear.pkl"
 FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
+
+MODEL_LOCK = threading.Lock()
+MODEL_ROWS: list[dict[str, Any]] = []
+MODEL_COEFFICIENTS: dict[str, float] = {}
+MODEL_INFO: dict[str, Any] = {}
+CHAT_SESSIONS: dict[str, list[dict[str, str]]] = {}
+SCHEDULER: BackgroundScheduler | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    session_id: str
+    answer: str
+    detected_language: str
+    sources: list[str]
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -81,9 +102,7 @@ def _load_csv_data() -> list[dict[str, Any]]:
     ]
 
     for candidate in candidates:
-        if not candidate:
-            continue
-        if not candidate.exists():
+        if not candidate or not candidate.exists():
             continue
 
         rows: list[dict[str, Any]] = []
@@ -111,37 +130,14 @@ def _load_csv_data() -> list[dict[str, Any]]:
                     "CPI": _safe_float(r.get("CPI")),
                     "Unemployment": _safe_float(r.get("Unemployment")),
                 }
-                if row["Store"] <= 0:
-                    continue
-                rows.append(row)
+                if row["Store"] > 0:
+                    rows.append(row)
 
         if rows:
             rows.sort(key=lambda x: (x["Store"], x["Date"]))
             return rows
 
     return _generate_demo_data()
-
-
-def _predict_series_heuristic(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_store: dict[int, list[float]] = {}
-    out: list[dict[str, Any]] = []
-
-    for row in sorted(rows, key=lambda r: (r["Store"], r["Date"])):
-        store = int(row["Store"])
-        history = by_store.setdefault(store, [])
-        if len(history) < 4:
-            pred = float(row["Weekly_Sales"])
-        else:
-            recent = history[-4:]
-            drift = (recent[-1] - recent[0]) / 3.0
-            pred = mean(recent) + 0.25 * drift
-        history.append(float(row["Weekly_Sales"]))
-
-        new_row = dict(row)
-        new_row["Predicted_Sales"] = round(max(1000.0, pred), 2)
-        out.append(new_row)
-
-    return out
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float:
@@ -160,9 +156,7 @@ def _pearson(xs: list[float], ys: list[float]) -> float:
         dx += xv * xv
         dy += yv * yv
     den = math.sqrt(dx * dy)
-    if den == 0:
-        return 0.0
-    return num / den
+    return 0.0 if den == 0 else num / den
 
 
 def _std(values: list[float]) -> float:
@@ -174,15 +168,7 @@ def _std(values: list[float]) -> float:
     return math.sqrt(max(var, 0.0))
 
 
-def _fit_notebook_like_model(
-    rows: list[dict[str, Any]],
-) -> tuple[dict[tuple[int, str], float], dict[str, float], dict[str, Any]]:
-    if not HAS_NOTEBOOK_STACK:
-        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "notebook dependencies not installed"})
-
-    if len(rows) < 180:
-        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "insufficient rows"})
-
+def _feature_engineering(rows: list[dict[str, Any]]) -> tuple[pd.DataFrame, float]:
     df = pd.DataFrame(rows).copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values(["Store", "Date"]).reset_index(drop=True)
@@ -192,129 +178,172 @@ def _fit_notebook_like_model(
     df["week_cos"] = np.cos(2 * np.pi * df["weekofyear"] / 52)
     df["trend"] = (df["Date"] - df["Date"].min()).dt.days
 
-    df["sales_lag_1"] = df.groupby("Store")["Weekly_Sales"].shift(1)
-    df["sales_lag_4"] = df.groupby("Store")["Weekly_Sales"].shift(4)
-    df["sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
-    df["sales_roll4_std"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).std()
+    df["log_cpi"] = np.log(np.clip(df["CPI"], 1e-9, None))
+    df["log_unemployment"] = np.log(np.clip(df["Unemployment"], 1e-9, None))
+    df["log_fuel"] = np.log(np.clip(df["Fuel_Price"], 1e-9, None))
 
+    temp_shift = float(abs(df["Temperature"].min()) + 1.0)
+    df["log_temperature"] = np.log(np.clip(df["Temperature"] + temp_shift, 1e-9, None))
+
+    df["log_sales"] = np.log(np.clip(df["Weekly_Sales"], 1e-9, None))
+    df["log_sales_lag_1"] = df.groupby("Store")["log_sales"].shift(1)
+    df["log_sales_lag_4"] = df.groupby("Store")["log_sales"].shift(4)
+    df["log_sales_roll4_mean"] = df.groupby("Store")["log_sales"].shift(1).rolling(4).mean()
+    df["log_sales_roll4_std"] = df.groupby("Store")["log_sales"].shift(1).rolling(4).std()
+
+    return df, temp_shift
+
+
+def _train_and_pickle_model(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    df, temp_shift = _feature_engineering(rows)
     model_df = df.dropna().copy()
     if len(model_df) < 160:
-        return ({}, {}, {"model_source": "heuristic_fallback", "reason": "insufficient rows after feature engineering"})
+        raise RuntimeError("insufficient rows after feature engineering")
 
-    formula = (
-        "Weekly_Sales ~ Holiday_Flag + Temperature + Fuel_Price + CPI + Unemployment "
-        "+ trend + week_sin + week_cos + sales_lag_1 + sales_lag_4 + sales_roll4_mean + sales_roll4_std"
-    )
+    feature_cols = [
+        "Holiday_Flag",
+        "log_cpi",
+        "log_unemployment",
+        "log_fuel",
+        "log_temperature",
+        "trend",
+        "week_sin",
+        "week_cos",
+        "log_sales_lag_1",
+        "log_sales_lag_4",
+        "log_sales_roll4_mean",
+        "log_sales_roll4_std",
+    ]
 
-    if int(model_df["Store"].nunique()) > 1:
-        formula += " + C(Store)"
+    X_core = model_df[feature_cols].copy()
+    X_store = pd.get_dummies(model_df["Store"].astype(str), prefix="store", drop_first=False)
+    X = pd.concat([X_core, X_store], axis=1)
+    y = model_df["log_sales"].values
 
-    try:
-        if int(model_df["Store"].nunique()) > 1:
-            model = smf.ols(formula=formula, data=model_df).fit(
-                cov_type="cluster", cov_kwds={"groups": model_df["Store"]}
-            )
-        else:
-            model = smf.ols(formula=formula, data=model_df).fit()
-    except Exception as exc:
-        return ({}, {}, {"model_source": "heuristic_fallback", "reason": f"ols fit failed: {exc}"})
-
-    model_df["Predicted_Sales"] = model.predict(model_df)
+    model = LinearRegression()
+    model.fit(X, y)
+    pred_log = model.predict(X)
+    model_df["Predicted_Sales"] = np.exp(pred_log)
 
     pred_map: dict[tuple[int, str], float] = {}
     for _, r in model_df[["Store", "Date", "Predicted_Sales"]].iterrows():
-        key = (int(r["Store"]), pd.Timestamp(r["Date"]).strftime("%Y-%m-%d"))
-        pred_map[key] = float(r["Predicted_Sales"])
+        pred_map[(int(r["Store"]), pd.Timestamp(r["Date"]).strftime("%Y-%m-%d"))] = float(r["Predicted_Sales"])
 
-    coef_map = {f: float(model.params.get(f, 0.0)) for f in FEATURES}
-    info = {
-        "model_source": "notebook_ols",
-        "formula": formula,
-        "r2": float(model.rsquared),
-        "rows_fit": int(len(model_df)),
+    coef_lookup = {name: float(val) for name, val in zip(X.columns, model.coef_)}
+    elasticity = {
+        "CPI": coef_lookup.get("log_cpi", 0.0),
+        "Unemployment": coef_lookup.get("log_unemployment", 0.0),
+        "Fuel_Price": coef_lookup.get("log_fuel", 0.0),
+        "Temperature": coef_lookup.get("log_temperature", 0.0),
     }
-    return pred_map, coef_map, info
+
+    artifact = {
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "model": model,
+        "feature_columns": list(X.columns),
+        "core_features": feature_cols,
+        "temp_shift": temp_shift,
+        "pred_map": pred_map,
+        "elasticity": elasticity,
+        "rows_fit": int(len(model_df)),
+        "r2_train": float(model.score(X, y)),
+        "source": "pickled_log_linear",
+    }
+
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    with MODEL_PATH.open("wb") as f:
+        pickle.dump(artifact, f)
+
+    return artifact
 
 
-def _build_model_artifact(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    base_rows = _predict_series_heuristic(rows)
-    pred_map, coef_map, info = _fit_notebook_like_model(rows)
+def _load_or_train_artifact(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if MODEL_PATH.exists():
+        try:
+            with MODEL_PATH.open("rb") as f:
+                artifact = pickle.load(f)
+            if isinstance(artifact, dict) and artifact.get("source") == "pickled_log_linear":
+                return artifact
+        except Exception:
+            pass
+    return _train_and_pickle_model(rows)
 
-    merged_rows: list[dict[str, Any]] = []
-    for r in base_rows:
-        key = (int(r["Store"]), str(r["Date"]))
-        out = dict(r)
-        if key in pred_map:
-            out["Predicted_Sales"] = round(max(1000.0, float(pred_map[key])), 2)
-        merged_rows.append(out)
 
-    if not coef_map:
-        # Keep old behavior as fallback for a non-breaking UI.
-        coef_map = {}
+def _build_runtime_state(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+    try:
+        artifact = _load_or_train_artifact(rows)
+    except Exception as exc:
+        fallback_rows = []
+        by_store: dict[int, list[float]] = {}
+        for row in sorted(rows, key=lambda r: (r["Store"], r["Date"])):
+            s = int(row["Store"])
+            hist = by_store.setdefault(s, [])
+            pred = float(row["Weekly_Sales"]) if len(hist) < 4 else mean(hist[-4:])
+            hist.append(float(row["Weekly_Sales"]))
+            nr = dict(row)
+            nr["Predicted_Sales"] = round(max(1000.0, pred), 2)
+            fallback_rows.append(nr)
+
+        coeffs = {}
         for f in FEATURES:
-            x = [float(v[f]) for v in merged_rows]
-            y = [float(v["Weekly_Sales"]) for v in merged_rows]
+            x = [float(v[f]) for v in fallback_rows]
+            y = [float(v["Weekly_Sales"]) for v in fallback_rows]
             corr = _pearson(x, y)
             std_x = _std(x)
             std_y = _std(y)
-            coef_map[f] = 0.0 if std_x == 0 else corr * (std_y / std_x)
+            coeffs[f] = 0.0 if std_x == 0 else corr * (std_y / std_x)
 
-    return {
-        "rows": merged_rows,
-        "coefficients": coef_map,
-        "info": info,
+        info = {
+            "model_source": "heuristic_fallback",
+            "reason": str(exc),
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "retrain_cron": "every_6_hours",
+        }
+        return fallback_rows, coeffs, info
+
+    pred_map = artifact.get("pred_map", {})
+    out_rows: list[dict[str, Any]] = []
+    for r in rows:
+        nr = dict(r)
+        key = (int(nr["Store"]), str(nr["Date"]))
+        nr["Predicted_Sales"] = round(max(1000.0, float(pred_map.get(key, nr["Weekly_Sales"]))), 2)
+        out_rows.append(nr)
+
+    info = {
+        "model_source": "pickled_log_linear",
+        "trained_at": artifact.get("trained_at"),
+        "rows_fit": artifact.get("rows_fit"),
+        "r2_train": artifact.get("r2_train"),
+        "pickle_path": str(MODEL_PATH.relative_to(BASE_DIR)),
+        "retrain_cron": "every_6_hours",
     }
+    return out_rows, artifact.get("elasticity", {}), info
 
 
-RAW_ROWS = _load_csv_data()
-MODEL_ARTIFACT = _build_model_artifact(RAW_ROWS)
-MODEL_ROWS = MODEL_ARTIFACT["rows"]
-MODEL_COEFFICIENTS = MODEL_ARTIFACT["coefficients"]
-MODEL_INFO = MODEL_ARTIFACT["info"]
-
-app = FastAPI(title="Walmart Forecast API", version="4.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def _refresh_model_state() -> None:
+    global MODEL_ROWS, MODEL_COEFFICIENTS, MODEL_INFO
+    with MODEL_LOCK:
+        raw = _load_csv_data()
+        rows, coefs, info = _build_runtime_state(raw)
+        MODEL_ROWS = rows
+        MODEL_COEFFICIENTS = coefs
+        MODEL_INFO = info
 
 
-@app.get("/api/health")
-def health() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "rows": len(MODEL_ROWS),
-        "model_source": MODEL_INFO.get("model_source", "unknown"),
-        "model_info": MODEL_INFO,
-    }
-
-
-@app.get("/api/stores")
-def stores() -> list[dict[str, Any]]:
-    grouped: dict[int, list[dict[str, Any]]] = {}
-    for r in MODEL_ROWS:
-        grouped.setdefault(int(r["Store"]), []).append(r)
-
-    out = []
-    for sid in sorted(grouped.keys()):
-        vals = grouped[sid]
-        out.append(
-            {
-                "Store": sid,
-                "records": len(vals),
-                "avg_sales": round(mean([float(v["Weekly_Sales"]) for v in vals]), 2),
-            }
-        )
-    return out
+def _start_scheduler() -> None:
+    global SCHEDULER
+    if SCHEDULER is not None:
+        return
+    SCHEDULER = BackgroundScheduler(timezone="UTC")
+    SCHEDULER.add_job(_refresh_model_state, "interval", hours=6, id="retrain_sales_model", replace_existing=True)
+    SCHEDULER.start()
 
 
 def _filtered_rows(store: str, weeks: int) -> list[dict[str, Any]]:
+    rows_snapshot = MODEL_ROWS
     if store == "all":
         by_date: dict[str, list[dict[str, Any]]] = {}
-        for r in MODEL_ROWS:
+        for r in rows_snapshot:
             by_date.setdefault(str(r["Date"]), []).append(r)
 
         data = []
@@ -340,13 +369,106 @@ def _filtered_rows(store: str, weeks: int) -> list[dict[str, Any]]:
             sid = int(store)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid store") from exc
-        data = [r for r in MODEL_ROWS if int(r["Store"]) == sid]
+        data = [r for r in rows_snapshot if int(r["Store"]) == sid]
 
     if not data:
         raise HTTPException(status_code=404, detail="No data found")
 
-    data = sorted(data, key=lambda r: r["Date"])[-max(1, weeks) :]
-    return data
+    return sorted(data, key=lambda r: r["Date"])[-max(1, weeks) :]
+
+
+def _detect_language(text: str) -> str:
+    t = text.lower()
+    if re.search(r"[\u0900-\u097f]", text):
+        return "hindi"
+    if any(k in t for k in ["kya", "kaise", "kyun", "kyu", "batao", "samjhao", "hai", "nahi"]):
+        return "hinglish"
+    return "english"
+
+
+def _economic_answer(message: str) -> str:
+    q = message.lower()
+    rows = _filtered_rows("all", 160)
+    avg_sales = mean([float(r["Weekly_Sales"]) for r in rows])
+    peak_sales = max([float(r["Weekly_Sales"]) for r in rows])
+
+    if "coefficient" in q or "beta" in q or "elastic" in q:
+        lines = ["Current elasticity-style coefficients from the deployed log model:"]
+        for f in FEATURES:
+            b = float(MODEL_COEFFICIENTS.get(f, 0.0))
+            lines.append(f"- {f}: {b:.4f} (approx. % sales change for 1% {f} change)")
+        return "\n".join(lines)
+
+    if "forecast" in q or "predict" in q:
+        pred_avg = mean([float(r["Predicted_Sales"]) for r in rows])
+        gap = pred_avg - avg_sales
+        return (
+            f"Baseline forecast over the selected horizon is {pred_avg:,.0f} average weekly sales. "
+            f"Compared to actual average {avg_sales:,.0f}, model gap is {gap:,.0f}. "
+            "Use what-if controls to simulate macro-factor shocks."
+        )
+
+    if "compare" in q or "store" in q:
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for r in MODEL_ROWS:
+            grouped.setdefault(int(r["Store"]), []).append(r)
+        top = sorted(
+            [(sid, mean([float(x["Weekly_Sales"]) for x in vals])) for sid, vals in grouped.items()],
+            key=lambda x: x[1],
+            reverse=True,
+        )[:3]
+        return "Top stores by average sales: " + ", ".join([f"Store {sid} ({v:,.0f})" for sid, v in top])
+
+    return (
+        f"Average weekly sales are {avg_sales:,.0f} and peak weekly sales are {peak_sales:,.0f}. "
+        "Ask for forecast, coefficient interpretation, scenario impact, store comparisons, anomalies, or macro-factor analysis."
+    )
+
+
+app = FastAPI(title="Walmart Forecast API", version="5.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    _refresh_model_state()
+    _start_scheduler()
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "rows": len(MODEL_ROWS),
+        "model_source": MODEL_INFO.get("model_source", "unknown"),
+        "model_info": MODEL_INFO,
+        "chatbot": "taAI",
+    }
+
+
+@app.get("/api/stores")
+def stores() -> list[dict[str, Any]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for r in MODEL_ROWS:
+        grouped.setdefault(int(r["Store"]), []).append(r)
+
+    out = []
+    for sid in sorted(grouped.keys()):
+        vals = grouped[sid]
+        out.append(
+            {
+                "Store": sid,
+                "records": len(vals),
+                "avg_sales": round(mean([float(v["Weekly_Sales"]) for v in vals]), 2),
+            }
+        )
+    return out
 
 
 @app.get("/api/overview")
@@ -354,7 +476,6 @@ def overview(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     rows = _filtered_rows(store, weeks)
     sales = [float(r["Weekly_Sales"]) for r in rows]
     holidays = [float(r["Weekly_Sales"]) for r in rows if int(r["Holiday_Flag"]) == 1]
-
     return {
         "store": store,
         "records": len(rows),
@@ -387,16 +508,21 @@ def correlations(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
 def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     rows = _filtered_rows(store, weeks)
     y = [float(r["Weekly_Sales"]) for r in rows]
-    std_y = _std(y)
+    mean_sales = sum(y) / len(y) if y else 0.0
     out = []
 
     for f in FEATURES:
         x = [float(r[f]) for r in rows]
         corr = _pearson(x, y)
         std_x = _std(x)
+        std_y = _std(y)
         mean_x = sum(x) / len(x) if x else 0.0
-        beta_per_unit = float(MODEL_COEFFICIENTS.get(f, 0.0))
+        beta_log = float(MODEL_COEFFICIENTS.get(f, 0.0))
+
+        beta_per_unit = 0.0 if mean_x == 0 else beta_log * (mean_sales / mean_x)
         beta_10pct = beta_per_unit * (0.1 * mean_x)
+        pct_impact_10pct = beta_log * 0.10 * 100.0
+
         out.append(
             {
                 "feature": f,
@@ -404,8 +530,10 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
                 "std_x": round(std_x, 4),
                 "std_y": round(std_y, 4),
                 "mean_x": round(mean_x, 4),
+                "beta_log": round(beta_log, 4),
                 "beta_per_unit": round(beta_per_unit, 4),
                 "beta_10pct": round(beta_10pct, 2),
+                "pct_impact_10pct": round(pct_impact_10pct, 3),
             }
         )
 
@@ -416,8 +544,49 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "target": "Weekly_Sales",
         "model_source": MODEL_INFO.get("model_source", "unknown"),
         "model_info": MODEL_INFO,
-        "note": "beta_per_unit comes from the fitted notebook-style OLS model; fallback is correlation-derived beta if OLS stack is unavailable.",
+        "note": "Model is trained on natural-log transformed target/features and persisted as pickle. beta_log is elasticity-style coefficient.",
     }
+
+
+@app.post("/api/taai/chat", response_model=ChatResponse)
+def taai_chat(payload: ChatRequest) -> ChatResponse:
+    msg = (payload.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    session_id = payload.session_id or str(uuid4())
+    history = CHAT_SESSIONS.setdefault(session_id, [])
+    history.append({"role": "user", "content": msg})
+
+    lang = _detect_language(msg)
+    core = _economic_answer(msg)
+
+    if lang == "hinglish":
+        answer = f"taAI insight: {core}\n\nAgar chaho toh main isi ko detailed scenario analysis mein tod sakta hoon."
+    elif lang == "hindi":
+        answer = f"taAI विश्लेषण: {core}\n\nअगर चाहें तो मैं इसे और विस्तृत परिदृश्य विश्लेषण में बदल सकता हूँ।"
+    else:
+        answer = f"taAI insight: {core}"
+
+    history.append({"role": "assistant", "content": answer})
+    if len(history) > 16:
+        CHAT_SESSIONS[session_id] = history[-16:]
+
+    return ChatResponse(
+        session_id=session_id,
+        answer=answer,
+        detected_language=lang,
+        sources=[
+            "walmart_sales_forecasting.ipynb",
+            "Walmart_Financial_Chatbot_Architecture.docx",
+            "runtime_sales_model_pickle",
+        ],
+    )
+
+
+@app.get("/api/taai/sessions/{session_id}")
+def taai_session(session_id: str) -> dict[str, Any]:
+    return {"session_id": session_id, "messages": CHAT_SESSIONS.get(session_id, [])}
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

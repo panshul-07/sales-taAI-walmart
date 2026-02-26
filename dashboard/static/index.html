@@ -1,563 +1,397 @@
 <!doctype html>
-<!-- render-sync: 2026-02-23-layout-parity -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Walmart Forecast Dashboard</title>
-    <style>
-      :root {
-        --bg: #06161c;
-        --muted: #b7c8cd;
-        --txt: #f3f7f8;
-        --surface-1: rgba(7, 35, 44, .92);
-        --surface-2: rgba(9, 29, 40, .9);
-        --card-1: rgba(8, 45, 58, 0.95);
-        --card-2: rgba(8, 34, 47, 0.95);
-        --border: rgba(176, 210, 214, .3);
-        --control-bg: #0b2732;
-        --chart-bg: #101a2d;
-        --actual: #16b6ad;
-        --pred: #7fb6ff;
-        --sim: #f2cc72;
-        --warn: #d6b25b;
-        --brand-teal: #0c8a8d;
-        --brand-gold: #cdb468;
-      }
-      body[data-theme="light"] {
-        --bg: #eef6f7;
-        --muted: #3f5d66;
-        --txt: #0d2530;
-        --surface-1: rgba(255, 255, 255, 0.95);
-        --surface-2: rgba(241, 249, 251, 0.95);
-        --card-1: rgba(255, 255, 255, 0.98);
-        --card-2: rgba(244, 250, 252, 0.98);
-        --border: rgba(28, 77, 95, 0.24);
-        --control-bg: #f8fcfd;
-        --chart-bg: #f4f9fd;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background:
-          radial-gradient(1200px 700px at 8% -10%, rgba(12, 138, 141, 0.32), transparent),
-          radial-gradient(900px 540px at 98% 115%, rgba(205, 180, 104, 0.2), transparent),
-          var(--bg);
-        color: var(--txt);
-        position: relative;
-        overflow-x: hidden;
-      }
-      body::before {
-        content: none;
-      }
-      body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(1000px 520px at 20% 8%, rgba(6, 22, 28, 0.2), transparent 55%),
-          linear-gradient(180deg, rgba(4, 16, 22, 0.22), rgba(4, 16, 22, 0.62));
-        z-index: 0;
-      }
-      .container { max-width: 1540px; margin: 0 auto; padding: 18px; position: relative; z-index: 1; }
-      .panel {
-        background: linear-gradient(180deg, var(--surface-1), var(--surface-2));
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 14px;
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255,255,255,.05);
-      }
-      h1 {
-        background: linear-gradient(90deg, #d9e9ec 0%, #16b6ad 52%, #d6b25b 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-      }
-      .head { display: grid; gap: 10px; grid-template-columns: 1fr auto; align-items: end; }
-      .sub { color: var(--muted); font-size: 14px; }
-      .grid { display: grid; gap: 14px; }
-      .grid-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
-      .span-8 { grid-column: span 8; }
-      .span-6 { grid-column: span 6; }
-      .span-4 { grid-column: span 4; }
-      .cards { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-      .card {
-        border-radius: 12px;
-        padding: 12px;
-        background: linear-gradient(180deg, var(--card-1), var(--card-2));
-        border: 1px solid rgba(176, 210, 214, 0.24);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-      }
-      .cards .card:nth-child(odd) { border-left: 3px solid rgba(22, 182, 173, .8); }
-      .cards .card:nth-child(even) { border-left: 3px solid rgba(214, 178, 91, .75); }
-      .k { color: var(--muted); font-size: 12px; }
-      .v { font-size: 31px; font-weight: 700; margin-top: 5px; line-height: 1; }
-      select, input[type="range"] { width: 100%; }
-      select {
-        background: var(--control-bg);
-        color: var(--txt);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 8px;
-      }
-      select:focus, input[type="range"]:focus {
-        outline: none;
-        box-shadow: 0 0 0 2px rgba(22, 182, 173, .35);
-      }
-      .chart {
-        width: 100%;
-        height: 340px;
-        background:
-          linear-gradient(180deg, rgba(8, 34, 58, 0.98), rgba(6, 27, 45, 0.98)),
-          radial-gradient(700px 260px at 90% -20%, rgba(214, 178, 91, .16), transparent 70%);
-        border: 1px solid rgba(176, 210, 214, .18);
-        border-radius: 12px;
-      }
-      body[data-theme="light"] .chart {
-        background:
-          linear-gradient(180deg, rgba(233, 245, 250, 1), rgba(246, 251, 254, 1)),
-          radial-gradient(700px 260px at 90% -20%, rgba(214, 178, 91, .22), transparent 70%);
-      }
-      .legend { font-size: 12px; color: var(--muted); margin-top: 6px; }
-      .sliderGrid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-      .mini { font-size: 12px; color: var(--muted); }
-      .coefTable { width:100%; border-collapse: collapse; font-size:12px; margin-top: 8px; }
-      .coefTable th, .coefTable td { padding: 6px; border-top: 1px solid rgba(255,255,255,.09); text-align: right; }
-      .coefTable th:first-child, .coefTable td:first-child { text-align: left; }
-      .bars { display: grid; gap: 8px; }
-      .bar { background: #0e2837; border: 1px solid rgba(176,210,214,.16); border-radius: 10px; padding: 8px; }
-      .bar-track { margin-top: 6px; height: 8px; border-radius: 99px; background: #243146; overflow: hidden; }
-      .bar-fill { height: 100%; }
-      .row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-      .themeSwitch { display:flex; gap:8px; align-items:center; }
-      .themeBtn {
-        border: 1px solid var(--border);
-        background: var(--control-bg);
-        color: var(--txt);
-        border-radius: 10px;
-        padding: 8px 12px;
-        cursor: pointer;
-      }
-      .themeBtn.active {
-        border-color: rgba(22, 182, 173, .7);
-        box-shadow: 0 0 0 2px rgba(22, 182, 173, .2) inset;
-      }
-      @media (max-width: 1180px) {
-        .span-8, .span-6, .span-4 { grid-column: span 12; }
-        .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      }
-      @media (max-width: 700px) {
-        .head { grid-template-columns: 1fr; }
-        .row, .sliderGrid { grid-template-columns: 1fr; }
-        .cards { grid-template-columns: 1fr; }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div class="head">
-        <div>
-          <h1 style="margin:0 0 8px 0;">Walmart Forecast Dashboard</h1>
-          <div class="sub">Detailed trend + coefficient simulation + responsive scatter analysis</div>
-        </div>
-        <div class="panel" style="padding:10px 12px;">
-          <div class="themeSwitch">
-            <span class="sub">Theme</span>
-            <button id="themeDark" class="themeBtn active" type="button">Dark</button>
-            <button id="themeLight" class="themeBtn" type="button">Light</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid grid-12" style="margin-top:14px;">
-        <div class="panel span-8">
-          <div class="row">
-            <div>
-              <label class="sub">Store</label>
-              <select id="store"></select>
-            </div>
-            <div>
-              <label class="sub">Weeks: <span id="weeksVal">160</span></label>
-              <input id="weeks" type="range" min="52" max="260" value="160" />
-            </div>
-          </div>
-        </div>
-        <div class="panel span-4">
-          <label class="sub">Scatter Factor</label>
-          <select id="factor">
-            <option value="CPI">CPI</option>
-            <option value="Unemployment">Unemployment</option>
-            <option value="Fuel_Price">Fuel Price</option>
-            <option value="Temperature">Temperature</option>
-          </select>
-          <div id="status" class="sub" style="margin-top:8px;">Loading...</div>
-        </div>
-      </div>
-
-      <div class="cards" style="margin-top:14px;">
-        <div class="card"><div class="k">Average Weekly Sales</div><div id="avg" class="v">-</div></div>
-        <div class="card"><div class="k">Peak Sales</div><div id="peak" class="v">-</div></div>
-        <div class="card"><div class="k">Holiday Avg</div><div id="havg" class="v">-</div></div>
-        <div class="card"><div class="k">Holiday Count</div><div id="hcount" class="v">-</div></div>
-        <div class="card"><div class="k">Simulated Avg Sales</div><div id="savg" class="v">-</div></div>
-      </div>
-
-      <div class="grid grid-12" style="margin-top:14px;">
-        <div class="panel span-8">
-          <div style="margin-bottom:8px;">Weekly Sales vs Baseline Prediction vs Simulated Prediction</div>
-          <svg id="trend" class="chart" viewBox="0 0 900 340" preserveAspectRatio="none"></svg>
-          <div class="legend">Green: Actual | Blue: Baseline model | Pink: Simulated (after factor changes)</div>
-        </div>
-
-        <div class="panel span-4">
-          <div style="margin-bottom:8px;">What-If Factor Controls (% Change)</div>
-          <div class="sliderGrid">
-            <div>
-              <label class="mini">CPI: <span id="adj_CPI">0%</span></label>
-              <input id="slider_CPI" type="range" min="-30" max="30" value="0" />
-            </div>
-            <div>
-              <label class="mini">Unemployment: <span id="adj_Unemployment">0%</span></label>
-              <input id="slider_Unemployment" type="range" min="-30" max="30" value="0" />
-            </div>
-            <div>
-              <label class="mini">Fuel Price: <span id="adj_Fuel_Price">0%</span></label>
-              <input id="slider_Fuel_Price" type="range" min="-30" max="30" value="0" />
-            </div>
-            <div>
-              <label class="mini">Temperature: <span id="adj_Temperature">0%</span></label>
-              <input id="slider_Temperature" type="range" min="-30" max="30" value="0" />
-            </div>
-          </div>
-          <div id="impactSummary" class="sub" style="margin-top:8px;">No adjustments applied.</div>
-        </div>
-      </div>
-
-      <div class="grid grid-12" style="margin-top:14px; margin-bottom:18px;">
-        <div class="panel span-8">
-          <div style="margin-bottom:8px;">Scatter: Adjusted Factor vs Simulated Sales</div>
-          <svg id="scatter" class="chart" viewBox="0 0 900 340" preserveAspectRatio="none"></svg>
-          <div class="legend">Orange: Holiday weeks | Y-axis is simulated sales | Yellow dashed line: best-fit trend</div>
-          <div id="scatterStats" class="mini" style="margin-top:6px;">Trend stats: -</div>
-        </div>
-
-        <div class="panel span-4">
-          <div style="margin-bottom:8px;">Correlations + Coefficients</div>
-          <div id="corrBars" class="bars"></div>
-          <table class="coefTable">
-            <thead>
-              <tr>
-                <th>Feature</th>
-                <th>Corr</th>
-                <th>Beta / unit</th>
-                <th>Impact at +10%</th>
-              </tr>
-            </thead>
-            <tbody id="coefRows"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      const FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"];
-      const state = {
-        store: "all",
-        weeks: 160,
-        factor: "CPI",
-        rows: [],
-        corr: [],
-        coef: [],
-        adjustments: { CPI: 0, Unemployment: 0, Fuel_Price: 0, Temperature: 0 },
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              ta: {
+                bg: "#06161c",
+                panel: "#0b2431",
+                panel2: "#0a1d2a",
+                border: "#20485d",
+                text: "#e8f3f6",
+                muted: "#9eb7bf",
+                actual: "#1fd0c6",
+                pred: "#6ea8ff",
+                sim: "#f2cc72",
+                warn: "#e3ae4f",
+              },
+            },
+            boxShadow: {
+              panel: "0 10px 26px rgba(0,0,0,.32)",
+            },
+          },
+        },
       };
-      const setTheme = (theme) => {
-        document.body.setAttribute("data-theme", theme);
-        document.getElementById("themeDark").classList.toggle("active", theme === "dark");
-        document.getElementById("themeLight").classList.toggle("active", theme === "light");
-        if (state.rows.length) renderSimulation();
-      };
+    </script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+  </head>
+  <body class="bg-slate-100 text-slate-900 dark bg-ta-bg dark:text-ta-text">
+    <div id="root"></div>
 
-      const fmtMoney = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n || 0));
+    <script type="text/babel">
+      const {
+        LineChart,
+        Line,
+        ScatterChart,
+        Scatter,
+        XAxis,
+        YAxis,
+        Tooltip,
+        CartesianGrid,
+        ResponsiveContainer,
+        Legend,
+      } = window.Recharts;
+
+      const FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"];
+      const fmtMoney = (n) =>
+        new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
+          Number(n || 0),
+        );
       const fmtCompact = (n) => {
         const v = Number(n || 0);
         if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
         if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
         return v.toFixed(0);
       };
-      const fmtDelta = (n) => {
-        const v = Number(n || 0);
-        const sign = v > 0 ? "+" : "";
-        if (Math.abs(v) >= 1_000_000) return `${sign}${(v / 1_000_000).toFixed(2)}M`;
-        if (Math.abs(v) >= 1_000) return `${sign}${(v / 1_000).toFixed(1)}K`;
-        return `${sign}${v.toFixed(0)}`;
-      };
-      const chartBg = () => getComputedStyle(document.body).getPropertyValue("--chart-bg").trim() || "#101a2d";
-      const api = (path) => fetch(path).then((r) => { if (!r.ok) throw new Error(path + " failed"); return r.json(); });
-
-      function pearson(xs, ys) {
-        const n = Math.min(xs.length, ys.length);
-        if (n < 2) return 0;
-        const mx = xs.slice(0, n).reduce((a, b) => a + b, 0) / n;
-        const my = ys.slice(0, n).reduce((a, b) => a + b, 0) / n;
-        let num = 0, dx = 0, dy = 0;
-        for (let i = 0; i < n; i += 1) {
-          const xv = xs[i] - mx;
-          const yv = ys[i] - my;
-          num += xv * yv;
-          dx += xv * xv;
-          dy += yv * yv;
-        }
-        const den = Math.sqrt(dx * dy);
-        return den === 0 ? 0 : num / den;
-      }
-
-      function buildStoreOptions(stores) {
-        const sel = document.getElementById("store");
-        sel.innerHTML = `<option value="all">All Stores</option>` + stores.map((s) => `<option value="${s.Store}">Store ${s.Store}</option>`).join("");
-      }
-
-      function adjustedRows() {
-        const beta = Object.fromEntries(state.coef.map((c) => [c.feature, Number(c.beta_per_unit || 0)]));
-        return state.rows.map((r) => {
-          let deltaSales = 0;
-          const xAdj = {};
-          const perFeatureDelta = {};
-          for (const f of FEATURES) {
-            const base = Number(r[f]);
-            const pct = Number(state.adjustments[f] || 0) / 100;
-            const newVal = base * (1 + pct);
-            xAdj[f] = newVal;
-            const d = (newVal - base) * (beta[f] || 0);
-            perFeatureDelta[f] = d;
-            deltaSales += d;
-          }
-          return {
-            ...r,
-            Adjusted_Factor: xAdj[state.factor],
-            Simulated_Sales: Math.max(1000, Number(r.Predicted_Sales) + deltaSales),
-            Delta_Sales: deltaSales,
-            Selected_Factor_Delta: perFeatureDelta[state.factor] || 0,
-          };
+      const api = (path, opts) =>
+        fetch(path, opts).then((r) => {
+          if (!r.ok) throw new Error(`${path} failed`);
+          return r.json();
         });
-      }
 
-      function drawAxesGrid(w, h, pad, yTicks = 5) {
-        const lines = [];
-        for (let i = 0; i <= yTicks; i += 1) {
-          const y = pad + ((h - pad * 2) * i) / yTicks;
-          lines.push(`<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="rgba(255,255,255,.08)"/>`);
-        }
-        return lines.join("");
-      }
+      function App() {
+        const [theme, setTheme] = React.useState(localStorage.getItem("theme") || "dark");
+        const [stores, setStores] = React.useState([]);
+        const [store, setStore] = React.useState("all");
+        const [weeks, setWeeks] = React.useState(160);
+        const [factor, setFactor] = React.useState("CPI");
+        const [status, setStatus] = React.useState("Loading...");
+        const [overview, setOverview] = React.useState(null);
+        const [rows, setRows] = React.useState([]);
+        const [corr, setCorr] = React.useState([]);
+        const [coef, setCoef] = React.useState([]);
+        const [adjustments, setAdjustments] = React.useState({ CPI: 0, Unemployment: 0, Fuel_Price: 0, Temperature: 0 });
 
-      function drawLine(rowsBase, rowsSim) {
-        const svg = document.getElementById("trend");
-        const w = 900, h = 340, pad = 34;
-        if (!rowsBase.length) { svg.innerHTML = ""; return; }
-
-        const ys = rowsBase.flatMap((r, i) => [Number(r.Weekly_Sales), Number(r.Predicted_Sales), Number(rowsSim[i].Simulated_Sales)]);
-        const minY = Math.min(...ys), maxY = Math.max(...ys);
-        const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
-        const xScale = (_, i) => pad + (i / Math.max(1, rowsBase.length - 1)) * (w - pad * 2);
-
-        const pActual = rowsBase.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Weekly_Sales))}`).join(" ");
-        const pPred = rowsBase.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Predicted_Sales))}`).join(" ");
-        const pSim = rowsSim.map((r, i) => `${xScale(r, i)},${yScale(Number(r.Simulated_Sales))}`).join(" ");
-
-        const yLabels = [];
-        for (let i = 0; i <= 6; i += 1) {
-          const yVal = maxY - ((maxY - minY) * i) / 6;
-          const yPos = pad + ((h - pad * 2) * i) / 6;
-          yLabels.push(`<text x="${pad - 8}" y="${yPos + 4}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="end">${fmtCompact(yVal)}</text>`);
-        }
-
-        const n = rowsBase.length;
-        const xLabels = [0, Math.floor(n * 0.33), Math.floor(n * 0.66), n - 1]
-          .filter((v, i, arr) => arr.indexOf(v) === i)
-          .map((idx) => {
-            const x = xScale(null, idx);
-            return `<text x="${x}" y="${h - 10}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="middle">${rowsBase[idx].Date}</text>`;
-          });
-
-        const last = n - 1;
-        const simDeltaLast = Number(rowsSim[last].Simulated_Sales) - Number(rowsBase[last].Predicted_Sales);
-
-        svg.innerHTML = `
-          <rect x="0" y="0" width="${w}" height="${h}" fill="${chartBg()}" />
-          ${drawAxesGrid(w, h, pad, 6)}
-          <polyline fill="none" stroke="var(--actual)" stroke-width="2.2" points="${pActual}" />
-          <polyline fill="none" stroke="var(--pred)" stroke-width="2" points="${pPred}" />
-          <polyline fill="none" stroke="var(--sim)" stroke-width="2" stroke-dasharray="5 4" points="${pSim}" />
-          ${yLabels.join("")}
-          ${xLabels.join("")}
-          <text x="${w - 10}" y="${yScale(Number(rowsBase[last].Weekly_Sales)) - 6}" fill="var(--actual)" font-size="10" text-anchor="end">A ${fmtCompact(rowsBase[last].Weekly_Sales)}</text>
-          <text x="${w - 10}" y="${yScale(Number(rowsBase[last].Predicted_Sales)) - 6}" fill="var(--pred)" font-size="10" text-anchor="end">P ${fmtCompact(rowsBase[last].Predicted_Sales)}</text>
-          <text x="${w - 10}" y="${yScale(Number(rowsSim[last].Simulated_Sales)) - 6}" fill="var(--sim)" font-size="10" text-anchor="end">S ${fmtCompact(rowsSim[last].Simulated_Sales)}</text>
-          <text x="${pad + 6}" y="${pad + 12}" fill="rgba(230,237,249,.8)" font-size="10">Last simulated - baseline: ${fmtCompact(simDeltaLast)}</text>
-        `;
-      }
-
-      function drawScatter(rowsSim) {
-        const svg = document.getElementById("scatter");
-        const w = 900, h = 340, pad = 34;
-        if (!rowsSim.length) { svg.innerHTML = ""; return; }
-
-        const xs = rowsSim.map((r) => Number(r.Adjusted_Factor));
-        const ys = rowsSim.map((r) => Number(r.Simulated_Sales));
-        const minX = Math.min(...xs), maxX = Math.max(...xs);
-        const minYRaw = Math.min(...ys);
-        const maxYRaw = Math.max(...ys);
-        const yPad = Math.max(1, (maxYRaw - minYRaw) * 0.12);
-        const minY = minYRaw - yPad;
-        const maxY = maxYRaw + yPad;
-        const xScale = (v) => pad + ((v - minX) / Math.max(1, maxX - minX)) * (w - pad * 2);
-        const yScale = (v) => h - pad - ((v - minY) / Math.max(1, maxY - minY)) * (h - pad * 2);
-
-        const mx = xs.reduce((a,b)=>a+b,0)/xs.length;
-        const my = ys.reduce((a,b)=>a+b,0)/ys.length;
-        let num=0, den=0;
-        for (let i=0;i<xs.length;i+=1){ num += (xs[i]-mx)*(ys[i]-my); den += (xs[i]-mx)*(xs[i]-mx);} 
-        const slope = den === 0 ? 0 : num/den;
-        const intercept = my - slope*mx;
-        const y1 = slope * minX + intercept;
-        const y2 = slope * maxX + intercept;
-
-        const yLabels = [];
-        for (let i = 0; i <= 6; i += 1) {
-          const yVal = maxY - ((maxY - minY) * i) / 6;
-          const yPos = pad + ((h - pad * 2) * i) / 6;
-          yLabels.push(`<text x="${pad - 8}" y="${yPos + 4}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="end">${fmtCompact(yVal)}</text>`);
-        }
-        const xLabels = [];
-        for (let i = 0; i <= 4; i += 1) {
-          const xVal = minX + ((maxX - minX) * i) / 4;
-          const xPos = xScale(xVal);
-          xLabels.push(`<text x="${xPos}" y="${h - 10}" fill="rgba(230,237,249,.75)" font-size="10" text-anchor="middle">${xVal.toFixed(2)}</text>`);
-        }
-
-        svg.innerHTML =
-          `<rect x="0" y="0" width="${w}" height="${h}" fill="${chartBg()}" />` +
-          drawAxesGrid(w, h, pad, 6) +
-          ((minY <= 0 && maxY >= 0)
-            ? `<line x1="${pad}" y1="${yScale(0)}" x2="${w - pad}" y2="${yScale(0)}" stroke="rgba(255,255,255,.32)" stroke-dasharray="4 4" />`
-            : "") +
-          rowsSim.map((r) => {
-            const color = Number(r.Holiday_Flag) === 1 ? "var(--warn)" : "var(--actual)";
-            return `<circle cx="${xScale(Number(r.Adjusted_Factor))}" cy="${yScale(Number(r.Simulated_Sales))}" r="3.2" fill="${color}" fill-opacity="0.9" />`;
-          }).join("") +
-          `<line x1="${xScale(minX)}" y1="${yScale(y1)}" x2="${xScale(maxX)}" y2="${yScale(y2)}" stroke="#ffd86a" stroke-width="1.8" stroke-dasharray="7 5" />` +
-          yLabels.join("") +
-          xLabels.join("");
-
-        const corrNow = pearson(xs, ys);
-        const r2 = corrNow * corrNow;
-        const avgSales = ys.reduce((a, b) => a + b, 0) / ys.length;
-        document.getElementById("scatterStats").textContent = `Trend line: sales = ${slope.toFixed(2)}x + ${intercept.toFixed(2)} | corr = ${corrNow.toFixed(3)} | R² = ${r2.toFixed(3)} | mean simulated sales = ${fmtMoney(avgSales)}`;
-      }
-
-      function renderCorrBars(corr) {
-        const el = document.getElementById("corrBars");
-        el.innerHTML = corr.map((c) => {
-          const pct = Math.min(100, Math.abs(c.corr) * 100);
-          const color = c.corr >= 0 ? "#35c4a1" : "#f5b042";
-          return `<div class="bar"><div style="display:flex;justify-content:space-between;"><span>${c.feature}</span><span>${Number(c.corr).toFixed(3)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div></div>`;
-        }).join("");
-      }
-
-      function renderCoefTable() {
-        const tbody = document.getElementById("coefRows");
-        tbody.innerHTML = state.coef.map((c) => `
-          <tr>
-            <td>${c.feature}</td>
-            <td>${Number(c.corr).toFixed(3)}</td>
-            <td>${Number(c.beta_per_unit).toFixed(3)}</td>
-            <td>${fmtMoney(c.beta_10pct)}</td>
-          </tr>
-        `).join("");
-      }
-
-      function renderSimulation() {
-        const rowsSim = adjustedRows();
-        const simAvg = rowsSim.length ? rowsSim.reduce((a,b)=>a+Number(b.Simulated_Sales),0)/rowsSim.length : 0;
-        const baseAvg = state.rows.length ? state.rows.reduce((a,b)=>a+Number(b.Predicted_Sales),0)/state.rows.length : 0;
-        const diff = simAvg - baseAvg;
-        const corrNow = pearson(rowsSim.map(r=>Number(r.Adjusted_Factor)), rowsSim.map(r=>Number(r.Simulated_Sales)));
-
-        document.getElementById("savg").textContent = fmtMoney(simAvg);
-        const pctDiff = (diff / Math.max(1, baseAvg)) * 100;
-        document.getElementById("impactSummary").textContent = `Simulated avg change vs baseline: ${fmtMoney(diff)} (${pctDiff.toFixed(2)}%) | corr(${state.factor}, simulated sales): ${corrNow.toFixed(3)}`;
-
-        drawLine(state.rows, rowsSim);
-        drawScatter(rowsSim);
-      }
-
-      async function refresh() {
-        document.getElementById("status").textContent = "Loading...";
-        const q = `store=${encodeURIComponent(state.store)}&weeks=${state.weeks}`;
-        const [ov, rows, corr, coef] = await Promise.all([
-          api(`/api/overview?${q}`),
-          api(`/api/store-data?${q}`),
-          api(`/api/correlations?${q}`),
-          api(`/api/coefficients?${q}`),
+        const [chatOpen, setChatOpen] = React.useState(false);
+        const [chatText, setChatText] = React.useState("");
+        const [chatSession, setChatSession] = React.useState(localStorage.getItem("taai_session") || "");
+        const [chatMessages, setChatMessages] = React.useState([
+          { role: "assistant", content: "taAI ready. Ask in English or Hinglish." },
         ]);
 
-        state.rows = rows;
-        state.corr = corr;
-        state.coef = coef.rows || [];
+        React.useEffect(() => {
+          document.documentElement.classList.toggle("dark", theme === "dark");
+          localStorage.setItem("theme", theme);
+        }, [theme]);
 
-        document.getElementById("avg").textContent = fmtMoney(ov.avg_weekly_sales);
-        document.getElementById("peak").textContent = fmtMoney(ov.peak_sales);
-        document.getElementById("havg").textContent = fmtMoney(ov.holiday_avg);
-        document.getElementById("hcount").textContent = String(ov.holiday_count);
-        const modelLabel = coef.model_source === "notebook_ols" ? "Notebook OLS coefficients" : "Fallback coefficients";
-        document.getElementById("status").textContent = `Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max}) | ${modelLabel}`;
+        const adjustedRows = React.useMemo(() => {
+          const beta = Object.fromEntries(coef.map((c) => [c.feature, Number(c.beta_per_unit || 0)]));
+          return rows.map((r) => {
+            let deltaSales = 0;
+            const xAdj = {};
+            for (const f of FEATURES) {
+              const base = Number(r[f]);
+              const pct = Number(adjustments[f] || 0) / 100;
+              const newVal = base * (1 + pct);
+              xAdj[f] = newVal;
+              deltaSales += (newVal - base) * (beta[f] || 0);
+            }
+            return {
+              ...r,
+              Adjusted_Factor: xAdj[factor],
+              Simulated_Sales: Math.max(1000, Number(r.Predicted_Sales) + deltaSales),
+            };
+          });
+        }, [rows, coef, adjustments, factor]);
 
-        renderCorrBars(corr);
-        renderCoefTable();
-        renderSimulation();
+        const trendData = React.useMemo(
+          () =>
+            rows.map((r, i) => ({
+              Date: r.Date,
+              Actual: Number(r.Weekly_Sales),
+              Baseline: Number(r.Predicted_Sales),
+              Simulated: Number(adjustedRows[i]?.Simulated_Sales || r.Predicted_Sales),
+            })),
+          [rows, adjustedRows],
+        );
+
+        const scatterData = React.useMemo(
+          () =>
+            adjustedRows.map((r) => ({
+              x: Number(r.Adjusted_Factor),
+              y: Number(r.Simulated_Sales),
+              holiday: Number(r.Holiday_Flag) === 1,
+            })),
+          [adjustedRows],
+        );
+
+        const impactSummary = React.useMemo(() => {
+          if (!rows.length) return "";
+          const simAvg = adjustedRows.reduce((a, b) => a + Number(b.Simulated_Sales), 0) / adjustedRows.length;
+          const baseAvg = rows.reduce((a, b) => a + Number(b.Predicted_Sales), 0) / rows.length;
+          const diff = simAvg - baseAvg;
+          const pct = (diff / Math.max(baseAvg, 1)) * 100;
+          return `Simulated avg change vs baseline: ${fmtMoney(diff)} (${pct.toFixed(2)}%)`;
+        }, [rows, adjustedRows]);
+
+        const load = React.useCallback(async () => {
+          setStatus("Loading...");
+          const q = `store=${encodeURIComponent(store)}&weeks=${weeks}`;
+          const [st, ov, sr, cr, cf] = await Promise.all([
+            api("/api/stores"),
+            api(`/api/overview?${q}`),
+            api(`/api/store-data?${q}`),
+            api(`/api/correlations?${q}`),
+            api(`/api/coefficients?${q}`),
+          ]);
+          setStores(st);
+          setOverview(ov);
+          setRows(sr);
+          setCorr(cr);
+          setCoef(cf.rows || []);
+          setStatus(`Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max}) | ${cf.model_source}`);
+        }, [store, weeks]);
+
+        React.useEffect(() => {
+          load().catch((e) => setStatus(`Failed: ${e.message}`));
+        }, [load]);
+
+        const sendChat = async () => {
+          if (!chatText.trim()) return;
+          const msg = chatText.trim();
+          setChatText("");
+          setChatMessages((m) => [...m, { role: "user", content: msg }]);
+          try {
+            const res = await api("/api/taai/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: msg, session_id: chatSession || null }),
+            });
+            if (!chatSession) {
+              setChatSession(res.session_id);
+              localStorage.setItem("taai_session", res.session_id);
+            }
+            setChatMessages((m) => [...m, { role: "assistant", content: res.answer }]);
+          } catch (e) {
+            setChatMessages((m) => [...m, { role: "assistant", content: `Error: ${e.message}` }]);
+          }
+        };
+
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-ta-bg via-[#07222f] to-[#061821] text-ta-text dark:text-ta-text text-slate-900">
+            <div className="mx-auto max-w-[1540px] px-4 py-4">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+                <div>
+                  <h1 className="text-5xl font-bold tracking-tight bg-gradient-to-r from-[#d8e8ea] via-[#1fd0c6] to-[#f2cc72] bg-clip-text text-transparent">
+                    Walmart Forecast Dashboard
+                  </h1>
+                  <p className="text-sm text-ta-muted">Model-backed analysis and simulations</p>
+                </div>
+                <div className="rounded-xl border border-ta-border bg-[#0b2431]/90 px-3 py-2 shadow-panel flex items-center gap-2">
+                  <button
+                    className={`px-3 py-1 rounded-lg border ${theme === "dark" ? "bg-[#103646] border-[#1fd0c6]" : "bg-white text-slate-900 border-slate-300"}`}
+                    onClick={() => setTheme("dark")}
+                  >
+                    Dark
+                  </button>
+                  <button
+                    className={`px-3 py-1 rounded-lg border ${theme === "light" ? "bg-white text-slate-900 border-slate-300" : "border-[#335f70]"}`}
+                    onClick={() => setTheme("light")}
+                  >
+                    Light
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-12">
+                <div className="lg:col-span-8 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4 shadow-panel">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="text-sm text-ta-muted">Store</label>
+                      <select className="w-full mt-1 rounded-lg bg-[#0c2a37] border border-ta-border px-3 py-2" value={store} onChange={(e) => setStore(e.target.value)}>
+                        <option value="all">All Stores</option>
+                        {stores.map((s) => (
+                          <option key={s.Store} value={String(s.Store)}>{`Store ${s.Store}`}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm text-ta-muted">Weeks: {weeks}</label>
+                      <input className="w-full mt-2" type="range" min="52" max="260" value={weeks} onChange={(e) => setWeeks(Number(e.target.value))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4 shadow-panel">
+                  <label className="text-sm text-ta-muted">Scatter Factor</label>
+                  <select className="w-full mt-1 rounded-lg bg-[#0c2a37] border border-ta-border px-3 py-2" value={factor} onChange={(e) => setFactor(e.target.value)}>
+                    {FEATURES.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                  <div className="text-sm text-ta-muted mt-2">{status}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-5">
+                {[
+                  ["Average Weekly Sales", overview?.avg_weekly_sales || 0],
+                  ["Peak Sales", overview?.peak_sales || 0],
+                  ["Holiday Avg", overview?.holiday_avg || 0],
+                  ["Holiday Count", overview?.holiday_count || 0, true],
+                  ["Simulated Avg Sales", adjustedRows.length ? adjustedRows.reduce((a, b) => a + Number(b.Simulated_Sales), 0) / adjustedRows.length : 0],
+                ].map(([k, v, raw]) => (
+                  <div key={k} className="rounded-xl border border-ta-border bg-gradient-to-b from-[#0c3140] to-[#0b2735] p-3">
+                    <div className="text-xs text-ta-muted">{k}</div>
+                    <div className="text-5xl font-bold leading-tight">{raw ? String(v) : fmtMoney(v)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-12">
+                <div className="lg:col-span-8 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4">
+                  <div className="mb-2 text-3xl font-semibold">Weekly Sales vs Baseline vs Simulated</div>
+                  <div className="h-[340px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendData}>
+                        <CartesianGrid stroke="rgba(255,255,255,.09)" />
+                        <XAxis dataKey="Date" tick={{ fill: "#9eb7bf", fontSize: 11 }} />
+                        <YAxis tickFormatter={fmtCompact} tick={{ fill: "#9eb7bf", fontSize: 11 }} />
+                        <Tooltip formatter={(v) => fmtMoney(v)} />
+                        <Legend />
+                        <Line type="monotone" dataKey="Actual" stroke="#1fd0c6" dot={false} strokeWidth={2} />
+                        <Line type="monotone" dataKey="Baseline" stroke="#6ea8ff" dot={false} strokeWidth={2} />
+                        <Line type="monotone" dataKey="Simulated" stroke="#f2cc72" dot={false} strokeDasharray="6 4" strokeWidth={2} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4">
+                  <div className="mb-3 text-3xl font-semibold">What-If Controls (% Change)</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {FEATURES.map((f) => (
+                      <div key={f}>
+                        <label className="text-sm text-ta-muted">{f}: {adjustments[f]}%</label>
+                        <input
+                          className="w-full"
+                          type="range"
+                          min="-30"
+                          max="30"
+                          value={adjustments[f]}
+                          onChange={(e) => setAdjustments((a) => ({ ...a, [f]: Number(e.target.value) }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-sm text-ta-muted">{impactSummary}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-12 pb-20">
+                <div className="lg:col-span-8 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4">
+                  <div className="mb-2 text-3xl font-semibold">Scatter: Adjusted Factor vs Simulated Sales</div>
+                  <div className="h-[340px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ScatterChart>
+                        <CartesianGrid stroke="rgba(255,255,255,.09)" />
+                        <XAxis type="number" dataKey="x" name={factor} tick={{ fill: "#9eb7bf", fontSize: 11 }} />
+                        <YAxis type="number" dataKey="y" name="Simulated Sales" tickFormatter={fmtCompact} tick={{ fill: "#9eb7bf", fontSize: 11 }} />
+                        <Tooltip cursor={{ strokeDasharray: "3 3" }} formatter={(v, n) => (n === "y" ? fmtMoney(v) : Number(v).toFixed(3))} />
+                        <Scatter data={scatterData.filter((d) => !d.holiday)} fill="#1fd0c6" />
+                        <Scatter data={scatterData.filter((d) => d.holiday)} fill="#e3ae4f" />
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4 rounded-2xl border border-ta-border bg-gradient-to-b from-[#0b2431] to-[#0a1d2a] p-4">
+                  <div className="mb-2 text-3xl font-semibold">Correlations + Coefficients</div>
+                  <div className="space-y-2">
+                    {corr.map((c) => {
+                      const pct = Math.min(100, Math.abs(Number(c.corr)) * 100);
+                      return (
+                        <div key={c.feature} className="rounded-lg border border-ta-border p-2">
+                          <div className="flex justify-between text-base">
+                            <span>{c.feature}</span>
+                            <span>{Number(c.corr).toFixed(3)}</span>
+                          </div>
+                          <div className="mt-1 h-2 rounded-full bg-[#23384a] overflow-hidden">
+                            <div className="h-full" style={{ width: `${pct}%`, background: Number(c.corr) >= 0 ? "#1fd0c6" : "#e3ae4f" }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <table className="w-full mt-3 text-sm">
+                    <thead>
+                      <tr className="text-ta-muted border-b border-ta-border">
+                        <th className="text-left py-1">Feature</th>
+                        <th className="text-right py-1">Corr</th>
+                        <th className="text-right py-1">Log beta</th>
+                        <th className="text-right py-1">Impact +10%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coef.map((c) => (
+                        <tr key={c.feature} className="border-b border-[#1a3646]">
+                          <td className="py-1">{c.feature}</td>
+                          <td className="text-right">{Number(c.corr).toFixed(3)}</td>
+                          <td className="text-right">{Number(c.beta_log || 0).toFixed(3)}</td>
+                          <td className="text-right">{Number(c.pct_impact_10pct || 0).toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <button
+              className="fixed bottom-4 right-4 rounded-full bg-[#1fd0c6] text-[#032028] px-4 py-3 font-semibold shadow-2xl"
+              onClick={() => setChatOpen((v) => !v)}
+            >
+              taAI
+            </button>
+
+            {chatOpen && (
+              <div className="fixed bottom-20 right-4 w-[360px] max-w-[92vw] rounded-2xl border border-ta-border bg-[#091d28] shadow-2xl overflow-hidden">
+                <div className="px-3 py-2 border-b border-ta-border font-semibold">taAI Economist Assistant</div>
+                <div className="h-[320px] overflow-y-auto p-3 space-y-2">
+                  {chatMessages.map((m, idx) => (
+                    <div key={idx} className={`rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-[#173646] ml-8" : "bg-[#102734] mr-8"}`}>
+                      {m.content}
+                    </div>
+                  ))}
+                </div>
+                <div className="p-2 border-t border-ta-border flex gap-2">
+                  <input
+                    className="flex-1 rounded-lg bg-[#0f2a38] border border-ta-border px-3 py-2 text-sm"
+                    value={chatText}
+                    onChange={(e) => setChatText(e.target.value)}
+                    placeholder="Ask taAI..."
+                    onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                  />
+                  <button className="rounded-lg bg-[#1fd0c6] px-3 text-[#032028] font-semibold" onClick={sendChat}>Send</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
       }
 
-      async function init() {
-        const stores = await api("/api/stores");
-        buildStoreOptions(stores);
-        setTheme("dark");
-        document.getElementById("themeDark").onclick = () => setTheme("dark");
-        document.getElementById("themeLight").onclick = () => setTheme("light");
-
-        document.getElementById("store").onchange = async (e) => {
-          state.store = e.target.value;
-          await refresh();
-        };
-
-        document.getElementById("weeks").oninput = async (e) => {
-          state.weeks = Number(e.target.value);
-          document.getElementById("weeksVal").textContent = String(state.weeks);
-          await refresh();
-        };
-
-        document.getElementById("factor").onchange = (e) => {
-          state.factor = e.target.value;
-          renderSimulation();
-        };
-
-        for (const f of FEATURES) {
-          const id = `slider_${f}`;
-          document.getElementById(id).oninput = (e) => {
-            state.adjustments[f] = Number(e.target.value);
-            document.getElementById(`adj_${f}`).textContent = `${state.adjustments[f]}%`;
-            renderSimulation();
-          };
-        }
-
-        await refresh();
-      }
-
-      init().catch((err) => {
-        document.getElementById("status").textContent = "Failed to load dashboard";
-        console.error(err);
-      });
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     </script>
   </body>
 </html>
