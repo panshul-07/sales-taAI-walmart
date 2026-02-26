@@ -3,6 +3,8 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  BarChart,
+  Bar,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -80,7 +82,6 @@ export default function App() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatMessages, setChatMessages] = useState([{ role: 'assistant', content: 'taAI ready. Ask economic questions about the data.' }]);
   const [chatSessions, setChatSessions] = useState([]);
-  const [chatSuggestions, setChatSuggestions] = useState([]);
   const [insights, setInsights] = useState(null);
   const [distStats, setDistStats] = useState(null);
 
@@ -176,16 +177,6 @@ export default function App() {
     }
   }
 
-  async function loadChatSuggestions() {
-    try {
-      const res = await api('/api/taai/suggestions');
-      setChatSuggestions(Array.isArray(res.suggestions) ? res.suggestions : []);
-    } catch {
-      setChatSuggestions([]);
-    }
-  }
-
-
   async function loadChatSession(id) {
     if (!id) return;
     const res = await api(`/api/taai/sessions/${encodeURIComponent(id)}`);
@@ -218,6 +209,7 @@ export default function App() {
           content: res.answer || 'No response',
           intent: res.intent || null,
           confidence: Number(res.confidence || 0),
+          charts: Array.isArray(res.charts) ? res.charts : [],
         });
         return next;
       });
@@ -241,7 +233,6 @@ export default function App() {
 
   useEffect(() => {
     loadChatSessions();
-    loadChatSuggestions();
     if (chatSessionId) loadChatSession(chatSessionId).catch(() => {});
   }, []);
 
@@ -313,19 +304,39 @@ export default function App() {
                     <span>{Math.round(Number(m.confidence || 0) * 100)}% confidence</span>
                   </div>
                 )}
+                {Array.isArray(m.charts) && m.charts.length > 0 && (
+                  <div className="chatCharts">
+                    {m.charts.map((c, ci) => (
+                      <div key={ci} className="chatChartCard">
+                        <div className="mini">{c.title || 'Chart'}</div>
+                        <div className="chatChartWrap">
+                          <ResponsiveContainer width="100%" height="100%">
+                            {c.type === 'bar' ? (
+                              <BarChart data={c.data || []}>
+                                <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                                <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                                <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                                <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
+                                <Bar dataKey={c.ys?.[0] || 'y'} fill="#2ecdc4" radius={[4, 4, 0, 0]} />
+                              </BarChart>
+                            ) : (
+                              <LineChart data={c.data || []}>
+                                <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                                <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                                <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
+                                <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
+                                {(c.ys || ['y']).map((yk, i) => (
+                                  <Line key={yk} type="monotone" dataKey={yk} dot={false} strokeWidth={2} stroke={i === 0 ? '#2ecdc4' : '#7fb6ff'} />
+                                ))}
+                              </LineChart>
+                            )}
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-          <div className="chatQuick">
-            {(chatSuggestions.length ? chatSuggestions.slice(0, 8) : [
-              'Who made taAI?',
-              'Which dataset is this dashboard using?',
-              'When was the highest sales week?',
-              'When was the lowest sales week?',
-              'Compare top 5 stores by average weekly sales',
-              'Give me a 3-scenario forecast summary',
-            ]).map((q) => (
-              <button className="quickBtn" key={q} onClick={() => sendChat(q)}>{q}</button>
             ))}
           </div>
           <div className="chatSessions">

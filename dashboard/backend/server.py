@@ -48,6 +48,7 @@ class ChatResponse(BaseModel):
     sources: list[str]
     intent: str | None = None
     confidence: float | None = None
+    charts: list[dict[str, Any]] = []
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -399,6 +400,95 @@ def _store_rankings() -> list[tuple[int, float]]:
         key=lambda x: x[1],
         reverse=True,
     )
+
+
+def _build_chat_charts(message: str, history: list[dict[str, str]]) -> list[dict[str, Any]]:
+    q = _contextualize_question(message, history).lower()
+    store_hint = _extract_store_hint(q)
+    data_scope = str(store_hint) if store_hint else "all"
+    rows = _filtered_rows(data_scope, 160)
+    charts: list[dict[str, Any]] = []
+
+    # Always give a compact trend chart when asking sales/timing/forecast style questions.
+    if any(k in q for k in ["sales", "trend", "highest", "lowest", "forecast", "predict", "week", "month"]):
+        trend_rows = rows[-52:]
+        charts.append(
+            {
+                "type": "line",
+                "title": f"{'Store ' + str(store_hint) if store_hint else 'All Stores'}: Weekly Sales Trend",
+                "x": "Date",
+                "ys": ["Actual", "Baseline"],
+                "data": [
+                    {
+                        "Date": r["Date"],
+                        "Actual": float(r["Weekly_Sales"]),
+                        "Baseline": float(r["Predicted_Sales"]),
+                    }
+                    for r in trend_rows
+                ],
+            }
+        )
+
+    if any(k in q for k in ["top", "rank", "compare stores", "best stores"]):
+        n = _extract_top_n(q, default=5)
+        top = _store_rankings()[:n]
+        charts.append(
+            {
+                "type": "bar",
+                "title": f"Top {n} Stores by Avg Weekly Sales",
+                "x": "Store",
+                "ys": ["AvgSales"],
+                "data": [{"Store": f"Store {sid}", "AvgSales": float(val)} for sid, val in top],
+            }
+        )
+
+    if any(k in q for k in ["coefficient", "beta", "corr", "correlation", "elasticity"]):
+        coef_rows = [{"Feature": f, "Coefficient": float(MODEL_COEFFICIENTS.get(f, 0.0))} for f in FEATURES]
+        charts.append(
+            {
+                "type": "bar",
+                "title": "Model Coefficients",
+                "x": "Feature",
+                "ys": ["Coefficient"],
+                "data": coef_rows,
+            }
+        )
+
+    if any(k in q for k in ["holiday", "festival", "event weeks"]):
+        holidays = [float(r["Weekly_Sales"]) for r in rows if int(r["Holiday_Flag"]) == 1]
+        non_holidays = [float(r["Weekly_Sales"]) for r in rows if int(r["Holiday_Flag"]) == 0]
+        charts.append(
+            {
+                "type": "bar",
+                "title": "Holiday vs Non-Holiday Average Sales",
+                "x": "Segment",
+                "ys": ["AvgSales"],
+                "data": [
+                    {"Segment": "Holiday", "AvgSales": float(mean(holidays) if holidays else 0.0)},
+                    {"Segment": "Non-Holiday", "AvgSales": float(mean(non_holidays) if non_holidays else 0.0)},
+                ],
+            }
+        )
+
+    if any(k in q for k in ["anomaly", "unusual", "outlier"]):
+        residual_rows = rows[-80:]
+        charts.append(
+            {
+                "type": "line",
+                "title": "Residual Pattern (Actual - Baseline)",
+                "x": "Date",
+                "ys": ["Residual"],
+                "data": [
+                    {
+                        "Date": r["Date"],
+                        "Residual": float(r["Weekly_Sales"]) - float(r["Predicted_Sales"]),
+                    }
+                    for r in residual_rows
+                ],
+            }
+        )
+
+    return charts[:2]
 
 
 def _trend_direction(rows: list[dict[str, Any]]) -> tuple[str, float]:
@@ -854,6 +944,7 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
     lang = _detect_language(msg)
     intent = _classify_intent(msg)
     confidence = _confidence_for_intent(intent)
+    charts = _build_chat_charts(msg, history)
     llm_answer = _call_llm_with_grounding(msg, lang, history)
     if llm_answer:
         answer = llm_answer
@@ -877,6 +968,7 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
         sources=["walmart_sales_forecasting.ipynb", "extra_trees_notebook.pkl", source_tag],
         intent=intent,
         confidence=confidence,
+        charts=charts,
     )
 
 
