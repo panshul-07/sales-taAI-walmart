@@ -84,6 +84,7 @@ export default function App() {
   const [chatSuggestions, setChatSuggestions] = useState([]);
   const [insights, setInsights] = useState(null);
   const [distStats, setDistStats] = useState(null);
+  const [architecture, setArchitecture] = useState(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -186,6 +187,15 @@ export default function App() {
     }
   }
 
+  async function loadArchitecture() {
+    try {
+      const res = await api('/api/taai/architecture');
+      setArchitecture(res);
+    } catch {
+      setArchitecture(null);
+    }
+  }
+
   async function loadChatSession(id) {
     if (!id) return;
     const res = await api(`/api/taai/sessions/${encodeURIComponent(id)}`);
@@ -242,6 +252,7 @@ export default function App() {
   useEffect(() => {
     loadChatSessions();
     loadChatSuggestions();
+    loadArchitecture();
     if (chatSessionId) loadChatSession(chatSessionId).catch(() => {});
   }, []);
 
@@ -291,6 +302,28 @@ export default function App() {
           <div className="card"><div className="k">Holiday Avg</div><div className="v">{money(overview?.holiday_avg || 0)}</div></div>
           <div className="card"><div className="k">Holiday Count</div><div className="v">{overview?.holiday_count ?? 0}</div></div>
           <div className="card"><div className="k">Simulated Avg Sales</div><div className="v">{money(simulatedAvg)}</div></div>
+        </div>
+
+        <div className="panel archPanel">
+          <div className="title">taAI Architecture</div>
+          <div className="mini"><strong>Executive Summary:</strong> {architecture?.executive_summary || 'Loading architecture...'}</div>
+          <div className="archGrid">
+            <div>
+              <div className="k">Key Capabilities</div>
+              <ul>
+                {(architecture?.key_capabilities || []).map((x) => <li key={x} className="mini">{x}</li>)}
+              </ul>
+            </div>
+            <div>
+              <div className="k">System Architecture</div>
+              <div className="mini"><strong>Tier 1 Data Layer</strong></div>
+              <ul>{(architecture?.system_architecture?.tier_1_data_layer || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
+              <div className="mini"><strong>Tier 2 AI/ML Processing Layer</strong></div>
+              <ul>{(architecture?.system_architecture?.tier_2_ai_ml_processing_layer || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
+              <div className="mini"><strong>LLM Agent System</strong></div>
+              <ul>{(architecture?.system_architecture?.llm_agent_system || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid12 chartsTop">
@@ -397,10 +430,13 @@ export default function App() {
           ))}
         </div>
         <div className="chatQuick">
-          {(chatSuggestions.length ? chatSuggestions.slice(0, 3) : [
+          {(chatSuggestions.length ? chatSuggestions.slice(0, 6) : [
             'Give me a 3-scenario forecast summary',
             'Why did sales drop? Give main drivers',
             'Explain coefficients in simple terms',
+            'When was the highest sales week?',
+            'When was the lowest sales week?',
+            'Compare top 5 stores by average weekly sales',
           ]).map((q) => (
             <button className="quickBtn" key={q} onClick={() => sendChat(q)}>{q}</button>
           ))}

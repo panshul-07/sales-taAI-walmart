@@ -380,6 +380,16 @@ def _extract_top_n(q: str, default: int = 3) -> int:
     return default
 
 
+def _extract_store_hint(q: str) -> int | None:
+    m = re.search(r"\bstore\s*(\d+)\b", q.lower())
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
 def _store_rankings() -> list[tuple[int, float]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for r in MODEL_ROWS:
@@ -389,6 +399,33 @@ def _store_rankings() -> list[tuple[int, float]]:
         key=lambda x: x[1],
         reverse=True,
     )
+
+
+def _trend_direction(rows: list[dict[str, Any]]) -> tuple[str, float]:
+    if len(rows) < 8:
+        return "stable", 0.0
+    half = max(1, len(rows) // 2)
+    first = mean([float(r["Weekly_Sales"]) for r in rows[:half]])
+    second = mean([float(r["Weekly_Sales"]) for r in rows[half:]])
+    delta_pct = ((second - first) / max(first, 1.0)) * 100.0
+    if delta_pct > 1.5:
+        return "upward", delta_pct
+    if delta_pct < -1.5:
+        return "downward", delta_pct
+    return "stable", delta_pct
+
+
+def _contextualize_question(message: str, history: list[dict[str, str]]) -> str:
+    msg = message.strip()
+    if len(msg.split()) >= 4:
+        return msg
+    prev_users = [m["content"] for m in history if m.get("role") == "user"]
+    if not prev_users:
+        return msg
+    last_user = prev_users[-1]
+    if any(k in msg.lower() for k in ["lowest", "highest", "and", "also", "what about", "then"]):
+        return f"{last_user}. Follow-up: {msg}"
+    return msg
 
 
 def _economic_answer(message: str) -> str:
@@ -466,6 +503,104 @@ def _economic_answer(message: str) -> str:
         f"Current aggregate metrics: avg weekly sales {avg_sales:,.0f}, peak {peak_sales:,.0f}, lowest {low_sales:,.0f}, baseline prediction avg {pred_avg:,.0f}. "
         "You can ask: highest/lowest week, top N stores, coefficient interpretation, forecast scenarios, anomaly scan, or causal diagnostics."
     )
+
+
+def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> str:
+    q = _contextualize_question(message, history).lower()
+    store_hint = _extract_store_hint(q)
+    data_scope = str(store_hint) if store_hint else "all"
+    rows = _filtered_rows(data_scope, 160)
+
+    peak_row = max(rows, key=lambda r: float(r["Weekly_Sales"]))
+    low_row = min(rows, key=lambda r: float(r["Weekly_Sales"]))
+    sales = [float(r["Weekly_Sales"]) for r in rows]
+    preds = [float(r["Predicted_Sales"]) for r in rows]
+    avg_sales = mean(sales)
+    avg_pred = mean(preds)
+    trend, trend_pct = _trend_direction(rows)
+    holidays = [float(r["Weekly_Sales"]) for r in rows if int(r["Holiday_Flag"]) == 1]
+    non_holidays = [float(r["Weekly_Sales"]) for r in rows if int(r["Holiday_Flag"]) == 0]
+    holiday_lift = (
+        ((mean(holidays) - mean(non_holidays)) / max(mean(non_holidays), 1.0)) * 100.0
+        if holidays and non_holidays
+        else 0.0
+    )
+
+    if re.search(r"\b(hi|hello|hey|help)\b", q) or "what can you do" in q:
+        return (
+            "I can answer exact data questions from your Walmart dataset.\n"
+            "- Highest/lowest sales week with date/value\n"
+            "- Top-N stores by average sales\n"
+            "- Trend direction and magnitude\n"
+            "- Holiday lift vs non-holiday weeks\n"
+            "- Coefficient interpretation and scenario impact"
+        )
+
+    if any(k in q for k in ["lowest", "minimum", "worst week"]):
+        return (
+            f"Lowest sales week ({'Store ' + str(store_hint) if store_hint else 'All Stores'}):\n"
+            f"- Date: {low_row['Date']}\n"
+            f"- Actual sales: {float(low_row['Weekly_Sales']):,.0f}\n"
+            f"- Baseline prediction: {float(low_row['Predicted_Sales']):,.0f}"
+        )
+
+    if any(k in q for k in ["highest", "maximum", "peak", "best week"]):
+        return (
+            f"Highest sales week ({'Store ' + str(store_hint) if store_hint else 'All Stores'}):\n"
+            f"- Date: {peak_row['Date']}\n"
+            f"- Actual sales: {float(peak_row['Weekly_Sales']):,.0f}\n"
+            f"- Baseline prediction: {float(peak_row['Predicted_Sales']):,.0f}"
+        )
+
+    if any(k in q for k in ["top", "rank", "best stores", "compare stores"]):
+        n = _extract_top_n(q, default=5)
+        top = _store_rankings()[:n]
+        return (
+            f"Top {n} stores by average weekly sales:\n"
+            + "\n".join([f"- Store {sid}: {val:,.0f}" for sid, val in top])
+        )
+
+    if any(k in q for k in ["trend", "increasing", "decreasing", "up or down"]):
+        return (
+            f"Trend summary ({'Store ' + str(store_hint) if store_hint else 'All Stores'}):\n"
+            f"- Direction: {trend}\n"
+            f"- Change between first and second half of window: {trend_pct:+.2f}%\n"
+            f"- Current average weekly sales: {avg_sales:,.0f}"
+        )
+
+    if any(k in q for k in ["holiday", "festival", "event weeks"]):
+        return (
+            f"Holiday effect ({'Store ' + str(store_hint) if store_hint else 'All Stores'}):\n"
+            f"- Holiday average sales: {mean(holidays) if holidays else 0:,.0f}\n"
+            f"- Non-holiday average sales: {mean(non_holidays) if non_holidays else 0:,.0f}\n"
+            f"- Estimated holiday lift: {holiday_lift:+.2f}%"
+        )
+
+    if any(k in q for k in ["coefficient", "beta", "corr", "correlation", "elasticity"]):
+        ranked = sorted(
+            [(f, float(MODEL_COEFFICIENTS.get(f, 0.0))) for f in FEATURES],
+            key=lambda x: abs(x[1]),
+            reverse=True,
+        )
+        return (
+            "Coefficient interpretation (notebook-linked):\n"
+            + "\n".join([f"- {f}: {v:+.4f}" for f, v in ranked])
+            + "\nLargest absolute effect is the first item above."
+        )
+
+    if any(k in q for k in ["forecast", "next", "scenario", "predict"]):
+        optimistic = avg_pred * 1.06
+        pessimistic = avg_pred * 0.94
+        return (
+            "3-scenario forecast (based on baseline model):\n"
+            f"- Base: {avg_pred:,.0f}\n"
+            f"- Optimistic (+6%): {optimistic:,.0f}\n"
+            f"- Pessimistic (-6%): {pessimistic:,.0f}\n"
+            f"- Baseline vs actual gap: {((avg_pred-avg_sales)/max(avg_sales,1.0))*100:+.2f}%"
+        )
+
+    # fallback to existing intent-based layer
+    return _economic_answer(message)
 
 
 def _grounding_context() -> str:
@@ -708,7 +843,7 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
         answer = llm_answer
         source_tag = "openai_grounded"
     else:
-        core = _economic_answer(msg)
+        core = _economic_answer_advanced(msg, history)
         if lang == "hinglish":
             answer = f"{core}\nAgar required ho, main detailed economic decomposition bhi de sakta hoon."
         elif lang == "hindi":
@@ -762,6 +897,40 @@ def taai_insights(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "snapshot": snap,
         "coefficients": coeff,
         "model_source": MODEL_INFO.get("model_source", "unknown"),
+    }
+
+
+@app.get("/api/taai/architecture")
+def taai_architecture() -> dict[str, Any]:
+    return {
+        "executive_summary": (
+            "taAI is a Walmart financial intelligence assistant that combines notebook-trained forecasting, "
+            "coefficient-driven what-if simulation, and multilingual economist Q&A in a single production dashboard."
+        ),
+        "key_capabilities": [
+            "Natural-language Q&A on sales, seasonality, anomalies, and factor impacts",
+            "Store-level and aggregate analytics with exact date/value lookups",
+            "Notebook-aligned predictions + coefficient interpretation",
+            "What-if simulation with real-time chart updates",
+            "Session memory with persistent chat history",
+        ],
+        "system_architecture": {
+            "tier_1_data_layer": [
+                "CSV ingestion from dashboard/data/walmart_sales.csv",
+                "Feature normalization and date harmonization",
+                "Store/date indexed records for API serving",
+            ],
+            "tier_2_ai_ml_processing_layer": [
+                "ExtraTrees notebook-style artifact for baseline prediction",
+                "Coefficient extraction for explanatory simulation",
+                "Residual and distribution diagnostics (JB, skewness, kurtosis)",
+            ],
+            "llm_agent_system": [
+                "Intent routing + deterministic analytics tools",
+                "Grounded LLM responses when OPENAI_API_KEY is configured",
+                "Fallback rule-based economist engine for reliability",
+            ],
+        },
     }
 
 

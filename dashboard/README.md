@@ -6,6 +6,38 @@ This folder contains the complete dashboard service.
 
 - App: https://sales-panshul-walmart.onrender.com
 
+## Executive Summary
+
+`taAI` is a production-grade Walmart financial copilot combining model-driven forecasting, scenario simulation, and multilingual economist QA in one dashboard.
+
+## Key Capabilities
+
+- Deterministic data QA (highest/lowest week, top-N stores, trend and holiday impact)
+- Notebook-linked ExtraTrees prediction + coefficient interpretation
+- Multi-turn chat with persistent sessions
+- Distribution diagnostics (skewness, kurtosis, Jarque-Bera)
+- Responsive React frontend with interactive charts and what-if controls
+
+## System Architecture
+
+### Tier 1: Data Layer
+
+- Source dataset: `dashboard/data/walmart_sales.csv`
+- Date normalization + feature parsing in backend loader
+- Store/date indexed API-ready rows
+
+### Tier 2: AI/ML Processing Layer
+
+- Notebook-style ExtraTrees artifact for predictions
+- Coefficient extraction for simulation sensitivity
+- Scheduled artifact refresh with cron
+
+### LLM Agent System
+
+- Intent routing + rule-based analytics tools
+- Optional grounded OpenAI responses (`OPENAI_API_KEY`)
+- Persistent chat sessions in SQLite
+
 ## What It Includes
 
 - API endpoints for stores, overview, timeseries rows, correlations, coefficients
