@@ -75,7 +75,6 @@ export default function App() {
   const [overview, setOverview] = useState(null);
   const [adjustments, setAdjustments] = useState({ CPI: 0, Unemployment: 0, Fuel_Price: 0, Temperature: 0 });
 
-  const [chatOpen, setChatOpen] = useState(false);
   const [chatSessionId, setChatSessionId] = useState(localStorage.getItem('taai_session_id') || '');
   const [chatText, setChatText] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
@@ -84,7 +83,6 @@ export default function App() {
   const [chatSuggestions, setChatSuggestions] = useState([]);
   const [insights, setInsights] = useState(null);
   const [distStats, setDistStats] = useState(null);
-  const [architecture, setArchitecture] = useState(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -187,14 +185,6 @@ export default function App() {
     }
   }
 
-  async function loadArchitecture() {
-    try {
-      const res = await api('/api/taai/architecture');
-      setArchitecture(res);
-    } catch {
-      setArchitecture(null);
-    }
-  }
 
   async function loadChatSession(id) {
     if (!id) return;
@@ -252,7 +242,6 @@ export default function App() {
   useEffect(() => {
     loadChatSessions();
     loadChatSuggestions();
-    loadArchitecture();
     if (chatSessionId) loadChatSession(chatSessionId).catch(() => {});
   }, []);
 
@@ -304,25 +293,49 @@ export default function App() {
           <div className="card"><div className="k">Simulated Avg Sales</div><div className="v">{money(simulatedAvg)}</div></div>
         </div>
 
-        <div className="panel archPanel">
-          <div className="title">taAI Architecture</div>
-          <div className="mini"><strong>Executive Summary:</strong> {architecture?.executive_summary || 'Loading architecture...'}</div>
-          <div className="archGrid">
+        <div className="panel inlineChat">
+          <div className="chatHead">
             <div>
-              <div className="k">Key Capabilities</div>
-              <ul>
-                {(architecture?.key_capabilities || []).map((x) => <li key={x} className="mini">{x}</li>)}
-              </ul>
+              <div className="chatTitle">taAI Economist Assistant</div>
+              <div className="mini">Ask anything about sales, stores, model coefficients, creators, and dataset sources.</div>
             </div>
-            <div>
-              <div className="k">System Architecture</div>
-              <div className="mini"><strong>Tier 1 Data Layer</strong></div>
-              <ul>{(architecture?.system_architecture?.tier_1_data_layer || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
-              <div className="mini"><strong>Tier 2 AI/ML Processing Layer</strong></div>
-              <ul>{(architecture?.system_architecture?.tier_2_ai_ml_processing_layer || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
-              <div className="mini"><strong>LLM Agent System</strong></div>
-              <ul>{(architecture?.system_architecture?.llm_agent_system || []).map((x) => <li key={x} className="mini">{x}</li>)}</ul>
+            <div className="chatHeadBtns">
+              <button className="quickBtn" onClick={() => { setChatSessionId(''); localStorage.removeItem('taai_session_id'); setChatMessages([{ role: 'assistant', content: 'New chat started.' }]); }}>New</button>
             </div>
+          </div>
+          <div className="chatBody inlineBody">
+            {chatMessages.map((m, i) => (
+              <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>
+                {m.content}
+                {m.role !== 'user' && m.intent && (
+                  <div className="msgMeta">
+                    <span>{String(m.intent).replaceAll('_', ' ')}</span>
+                    <span>{Math.round(Number(m.confidence || 0) * 100)}% confidence</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="chatQuick">
+            {(chatSuggestions.length ? chatSuggestions.slice(0, 8) : [
+              'Who made taAI?',
+              'Which dataset is this dashboard using?',
+              'When was the highest sales week?',
+              'When was the lowest sales week?',
+              'Compare top 5 stores by average weekly sales',
+              'Give me a 3-scenario forecast summary',
+            ]).map((q) => (
+              <button className="quickBtn" key={q} onClick={() => sendChat(q)}>{q}</button>
+            ))}
+          </div>
+          <div className="chatSessions">
+            {chatSessions.length === 0 ? <div className="mini">No previous chats.</div> : chatSessions.map((s) => (
+              <button className="quickBtn" key={s.session_id} onClick={() => loadChatSession(s.session_id)}>{s.preview || s.session_id.slice(0, 8)}</button>
+            ))}
+          </div>
+          <div className="chatInput">
+            <input value={chatText} onChange={(e) => setChatText(e.target.value)} placeholder="Ask taAI..." onKeyDown={(e) => e.key === 'Enter' && sendChat(chatText)} />
+            <button disabled={chatBusy} onClick={() => sendChat(chatText)}>{chatBusy ? '...' : 'Send'}</button>
           </div>
         </div>
 
@@ -404,53 +417,6 @@ export default function App() {
         </div>
       </div>
 
-      <button className="chatFab" onClick={() => setChatOpen((v) => !v)}>taAI</button>
-      <div className={`chatPanel ${chatOpen ? 'open' : ''}`}>
-        <div className="chatHead">
-          <div>
-            <div className="chatTitle">taAI Economist Assistant</div>
-            <div className="mini">Analytical, multilingual, model-grounded</div>
-          </div>
-          <div className="chatHeadBtns">
-            <button className="quickBtn" onClick={() => { setChatSessionId(''); localStorage.removeItem('taai_session_id'); setChatMessages([{ role: 'assistant', content: 'New chat started.' }]); }}>New</button>
-            <button className="quickBtn" onClick={() => setChatOpen(false)}>Close</button>
-          </div>
-        </div>
-        <div className="chatBody">
-          {chatMessages.map((m, i) => (
-            <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>
-              {m.content}
-              {m.role !== 'user' && m.intent && (
-                <div className="msgMeta">
-                  <span>{String(m.intent).replaceAll('_', ' ')}</span>
-                  <span>{Math.round(Number(m.confidence || 0) * 100)}% confidence</span>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="chatQuick">
-          {(chatSuggestions.length ? chatSuggestions.slice(0, 6) : [
-            'Give me a 3-scenario forecast summary',
-            'Why did sales drop? Give main drivers',
-            'Explain coefficients in simple terms',
-            'When was the highest sales week?',
-            'When was the lowest sales week?',
-            'Compare top 5 stores by average weekly sales',
-          ]).map((q) => (
-            <button className="quickBtn" key={q} onClick={() => sendChat(q)}>{q}</button>
-          ))}
-        </div>
-        <div className="chatSessions">
-          {chatSessions.length === 0 ? <div className="mini">No previous chats.</div> : chatSessions.map((s) => (
-            <button className="quickBtn" key={s.session_id} onClick={() => loadChatSession(s.session_id)}>{s.preview || s.session_id.slice(0, 8)}</button>
-          ))}
-        </div>
-        <div className="chatInput">
-          <input value={chatText} onChange={(e) => setChatText(e.target.value)} placeholder="Ask taAI..." onKeyDown={(e) => e.key === 'Enter' && sendChat(chatText)} />
-          <button disabled={chatBusy} onClick={() => sendChat(chatText)}>{chatBusy ? '...' : 'Send'}</button>
-        </div>
-      </div>
     </div>
   );
 }

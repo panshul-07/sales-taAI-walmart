@@ -526,6 +526,22 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
         else 0.0
     )
 
+    if any(k in q for k in ["who made", "who built", "creator", "developers", "made this bot"]):
+        return (
+            "taAI was built by Panshulaj Pechetty and Rishabh Gupta.\n"
+            "It is integrated with the Walmart forecasting dashboard and notebook-linked model pipeline."
+        )
+
+    if any(k in q for k in ["dataset", "data source", "which data", "what data", "csv used"]):
+        src = resolve_data_path()
+        return (
+            "Current data sources in this deployment:\n"
+            f"- Primary dataset CSV: {str(src) if src else 'not found'}\n"
+            f"- In-memory rows loaded: {len(MODEL_ROWS)}\n"
+            f"- Model artifact: {MODEL_INFO.get('pickle_path', 'unknown')}\n"
+            "- Notebook alignment: walmart_sales_forecasting.ipynb + ExtraTrees artifact"
+        )
+
     if re.search(r"\b(hi|hello|hey|help)\b", q) or "what can you do" in q:
         return (
             "I can answer exact data questions from your Walmart dataset.\n"
@@ -878,6 +894,8 @@ def taai_sessions(limit: int = 20) -> dict[str, Any]:
 def taai_suggestions() -> dict[str, Any]:
     return {
         "suggestions": [
+            "Who made taAI?",
+            "Which dataset is this dashboard using?",
             "When was the highest sales week and what value?",
             "When was the lowest sales week and what value?",
             "Compare top 5 stores by average weekly sales.",
