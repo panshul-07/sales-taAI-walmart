@@ -43,7 +43,8 @@ Open: `http://127.0.0.1:8000`
 - Otherwise backend generates realistic demo data for 45 stores.
 - For `store=all`, data is aggregated by date for correct trend math.
 - Model uses natural logs for target/macroeconomic features and writes pickle to:
-  - `dashboard/backend/model_artifacts/sales_log_linear.pkl`
+  - `dashboard/backend/model_artifacts/extra_trees_notebook.pkl`
+  - training script: `dashboard/backend/train_notebook_artifact.py`
 
 ## Deploy on Render
 
