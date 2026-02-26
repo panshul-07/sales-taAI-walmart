@@ -514,11 +514,11 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
     else:
         core = _economic_answer(msg)
         if lang == "hinglish":
-            answer = f"taAI insight: {core}\nAgar chaho toh main detailed economic breakdown bhi de sakta hoon."
+            answer = f"{core}\nAgar required ho, main detailed economic decomposition bhi de sakta hoon."
         elif lang == "hindi":
-            answer = f"taAI विश्लेषण: {core}\nअगर चाहें तो मैं इसे चरण-दर-चरण और विस्तार से समझा सकता हूँ।"
+            answer = f"{core}\nआवश्यक होने पर मैं इसे चरण-दर-चरण विस्तार से समझा सकता हूँ।"
         else:
-            answer = f"taAI insight: {core}"
+            answer = core
         source_tag = "rule_based_fallback"
 
     _save_chat_message(session_id, "assistant", answer)

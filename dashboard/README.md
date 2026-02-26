@@ -1,4 +1,4 @@
-# Dashboard Service (FastAPI + React/Tailwind Frontend + taAI)
+# Dashboard Service (FastAPI + React/Vite Frontend + taAI)
 
 This folder contains the complete dashboard service.
 
@@ -7,7 +7,7 @@ This folder contains the complete dashboard service.
 - API endpoints for stores, overview, timeseries rows, correlations, coefficients
 - Pickled notebook-style ExtraTrees model artifact with scheduled retraining
 - `taAI` chatbot endpoints with session memory
-- Responsive React + Tailwind UI with:
+- Responsive React + Vite UI with:
   - KPI cards
   - Actual vs baseline vs simulated trend
   - Factor sliders for what-if analysis
