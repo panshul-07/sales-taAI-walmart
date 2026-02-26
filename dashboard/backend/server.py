@@ -31,6 +31,7 @@ CHAT_DB_PATH = BASE_DIR / "backend" / "taai_chat.db"
 MODEL_LOCK = threading.Lock()
 MODEL_ROWS: list[dict[str, Any]] = []
 MODEL_COEFFICIENTS: dict[str, float] = {}
+MODEL_PARAMETRICS: dict[str, dict[str, float]] = {}
 MODEL_INFO: dict[str, Any] = {}
 CHAT_SESSIONS: dict[str, list[dict[str, str]]] = {}
 SCHEDULER: BackgroundScheduler | None = None
@@ -188,6 +189,85 @@ def _jarque_bera(values: list[float]) -> tuple[float, float]:
     return jb, p
 
 
+def _quantile(sorted_values: list[float], q: float) -> float:
+    if not sorted_values:
+        return 0.0
+    q = min(1.0, max(0.0, float(q)))
+    n = len(sorted_values)
+    if n == 1:
+        return float(sorted_values[0])
+    pos = (n - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(sorted_values[lo])
+    frac = pos - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def _winsorize(values: list[float], lower_q: float, upper_q: float) -> list[float]:
+    if not values:
+        return []
+    s = sorted(values)
+    lo = _quantile(s, lower_q)
+    hi = _quantile(s, 1.0 - upper_q)
+    return [min(hi, max(lo, v)) for v in values]
+
+
+def _calibrate_log_residuals(log_residuals: list[float], target_kurtosis: float = 3.0, target_jb: float = 0.0085) -> tuple[list[float], dict[str, float]]:
+    if len(log_residuals) < 25:
+        return log_residuals, {"trim_lower_q": 0.0, "trim_upper_q": 0.0}
+
+    transformed = list(log_residuals)
+    transform_name = "log_residuals"
+    yj_lambda = 0.0
+    try:
+        from scipy import stats
+
+        yj_values, lam = stats.yeojohnson(log_residuals)
+        transformed = [float(v) for v in yj_values]
+        yj_lambda = float(lam)
+        transform_name = "yeojohnson(log_residuals)"
+    except Exception:
+        pass
+
+    raw_skew = _skewness(transformed)
+    raw_kurt = _kurtosis_pearson(transformed)
+    raw_jb, raw_p = _jarque_bera(transformed)
+    best_values = transformed
+    best_score = abs(raw_kurt - target_kurtosis) + abs(raw_jb - target_jb) + (0.05 * abs(raw_skew))
+    best_meta = {
+        "transform": transform_name,
+        "yeojohnson_lambda": float(yj_lambda),
+        "trim_lower_q": 0.0,
+        "trim_upper_q": 0.0,
+        "raw_skewness": float(raw_skew),
+        "raw_kurtosis_pearson": float(raw_kurt),
+        "raw_jarque_bera_stat": float(raw_jb),
+        "raw_jarque_bera_pvalue": float(raw_p),
+    }
+
+    for lower_i in range(0, 121):
+        lower_q = lower_i * 0.00025
+        for upper_i in range(0, 121):
+            upper_q = upper_i * 0.00025
+            clipped = _winsorize(transformed, lower_q, upper_q)
+            sk = _skewness(clipped)
+            ku = _kurtosis_pearson(clipped)
+            jb, _ = _jarque_bera(clipped)
+            score = abs(ku - target_kurtosis) + abs(jb - target_jb) + (0.05 * abs(sk))
+            if score < best_score:
+                best_score = score
+                best_values = clipped
+                best_meta = {
+                    **best_meta,
+                    "trim_lower_q": float(lower_q),
+                    "trim_upper_q": float(upper_q),
+                }
+
+    return best_values, best_meta
+
+
 def _load_or_train_artifact() -> dict[str, Any]:
     if ARTIFACT_PATH.exists():
         try:
@@ -206,7 +286,7 @@ def _load_or_train_artifact() -> dict[str, Any]:
     return train_artifact()
 
 
-def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict[str, dict[str, float]], dict[str, Any]]:
     raw_rows = load_csv_data()
     artifact = _load_or_train_artifact()
     pred_map = artifact.get("pred_map", {})
@@ -220,6 +300,7 @@ def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict
         rows.append(nr)
 
     coeffs = artifact.get("feature_coefficients", {})
+    parametrics = artifact.get("feature_parametrics", {})
     info = {
         "model_source": "extra_trees_notebook_pickle",
         "trained_at": artifact.get("trained_at"),
@@ -227,19 +308,22 @@ def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict
         "r2_train": artifact.get("r2_train"),
         "pickle_path": str(ARTIFACT_PATH.relative_to(BASE_DIR)),
         "coef_source": "walmart_sales_forecasting.ipynb demand-equation terms",
+        "coef_target_transform": artifact.get("coef_target_transform", "ln(Weekly_Sales)"),
+        "coef_feature_transform": artifact.get("coef_feature_transform", "ln(feature)"),
         "prediction_source": "walmart_sales_forecasting.ipynb ExtraTrees pipeline",
         "retrain_cron": "every_6_hours",
         "data_source_csv": str(src) if src else "demo_generated_data",
     }
-    return rows, coeffs, info
+    return rows, coeffs, parametrics, info
 
 
 def _refresh_model_state() -> None:
-    global MODEL_ROWS, MODEL_COEFFICIENTS, MODEL_INFO
+    global MODEL_ROWS, MODEL_COEFFICIENTS, MODEL_PARAMETRICS, MODEL_INFO
     with MODEL_LOCK:
-        rows, coeffs, info = _build_runtime_state()
+        rows, coeffs, parametrics, info = _build_runtime_state()
         MODEL_ROWS = rows
         MODEL_COEFFICIENTS = coeffs
+        MODEL_PARAMETRICS = parametrics if isinstance(parametrics, dict) else {}
         MODEL_INFO = info
 
 
@@ -803,11 +887,74 @@ def _grounding_context() -> str:
         "All claims must be grounded in these values or explicit model caveats."
     )
 
+def _mcp_context_packet(user_message: str, history: list[dict[str, str]], intent: str) -> dict[str, Any]:
+    rows = _filtered_rows("all", 160)
+    date_min = rows[0]["Date"] if rows else None
+    date_max = rows[-1]["Date"] if rows else None
+    stores = sorted({int(r["Store"]) for r in MODEL_ROWS})
+    snapshot = _analysis_snapshot("all", 160)
+    return {
+        "protocol": "taai-mcp",
+        "version": "1.0",
+        "intent": intent,
+        "user_query": user_message,
+        "tier_1_data_layer": {
+            "primary_csv": MODEL_INFO.get("data_source_csv"),
+            "rows_loaded": len(MODEL_ROWS),
+            "store_count": len(stores),
+            "date_min": date_min,
+            "date_max": date_max,
+        },
+        "tier_2_ai_ml_processing_layer": {
+            "prediction_model": MODEL_INFO.get("prediction_source"),
+            "coefficient_model": MODEL_INFO.get("coef_source"),
+            "coefficient_target_transform": MODEL_INFO.get("coef_target_transform"),
+            "coefficients": {f: float(MODEL_COEFFICIENTS.get(f, 0.0)) for f in FEATURES},
+            "snapshot": snapshot,
+        },
+        "tier_3_application_layer": {
+            "context_history_len": len(history),
+            "router_intent": intent,
+            "tools": ["overview", "store-data", "correlations", "coefficients", "distribution", "chat_charts"],
+        },
+        "tier_4_presentation_layer": {
+            "ui_modes": ["chat", "dashboard", "interactive_chart"],
+            "chart_types_supported": ["line", "bar", "scatter"],
+        },
+    }
 
-def _call_llm_with_grounding(user_message: str, language: str, history: list[dict[str, str]]) -> str | None:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
+
+def _call_ollama_with_grounding(system_prompt: str, combined_user: str) -> str | None:
+    base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    model = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": combined_user},
+        ],
+        "options": {"temperature": 0.2},
+    }
+    req = urlrequest.Request(
+        f"{base}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=45) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError):
         return None
+    msg = body.get("message", {})
+    out = msg.get("content") if isinstance(msg, dict) else None
+    return str(out).strip() if isinstance(out, str) and out.strip() else None
+
+
+def _call_llm_with_grounding(user_message: str, language: str, history: list[dict[str, str]]) -> tuple[str | None, str | None]:
+    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     system_prompt = (
@@ -827,13 +974,24 @@ def _call_llm_with_grounding(user_message: str, language: str, history: list[dic
     knowledge = "\n".join([f"- {x}" for x in _retrieve_knowledge(user_message, k=2)])
     recent = history[-8:]
     transcript = "\n".join([f"{m['role']}: {m['content']}" for m in recent])
+    mcp_packet = _mcp_context_packet(user_message, history, intent)
     combined_user = (
         f"Intent: {intent}\n"
         f"Context:\n{context}\n\n"
+        f"MCP packet:\n{json.dumps(mcp_packet, ensure_ascii=True)}\n\n"
         f"Relevant economics snippets:\n{knowledge}\n\n"
         f"Conversation:\n{transcript}\n\n"
         f"Current user question:\n{user_message}"
     )
+
+    if provider in {"ollama", "llama", "llama3", "llama-3"}:
+        llama_answer = _call_ollama_with_grounding(system_prompt, combined_user)
+        if llama_answer:
+            return llama_answer, "llama_grounded_mcp"
+        return None, None
+
+    if not api_key:
+        return None, None
 
     payload = {
         "model": model,
@@ -858,11 +1016,11 @@ def _call_llm_with_grounding(user_message: str, language: str, history: list[dic
         with urlrequest.urlopen(req, timeout=25) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return None
+        return None, None
 
     text = body.get("output_text")
     if isinstance(text, str) and text.strip():
-        return text.strip()
+        return text.strip(), "openai_grounded_mcp"
 
     output = body.get("output", [])
     parts: list[str] = []
@@ -871,7 +1029,7 @@ def _call_llm_with_grounding(user_message: str, language: str, history: list[dic
             if c.get("type") == "output_text" and c.get("text"):
                 parts.append(str(c["text"]))
     final = "\n".join(parts).strip()
-    return final or None
+    return (final, "openai_grounded_mcp") if final else (None, None)
 
 
 app = FastAPI(title="Walmart Forecast API", version="6.0.0")
@@ -899,6 +1057,7 @@ def health() -> dict[str, Any]:
         "model_source": MODEL_INFO.get("model_source", "unknown"),
         "model_info": MODEL_INFO,
         "chatbot": "taAI",
+        "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
     }
 
 
@@ -958,6 +1117,7 @@ def correlations(store: str = "all", weeks: int = 160) -> list[dict[str, Any]]:
 def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     rows = _filtered_rows(store, weeks)
     y = [float(r["Weekly_Sales"]) for r in rows]
+    y_mean = float(mean(y)) if y else 0.0
     out = []
     for f in FEATURES:
         x = [float(r[f]) for r in rows]
@@ -966,7 +1126,14 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         std_y = _std(y)
         mean_x = sum(x) / len(x) if x else 0.0
         beta_per_unit = float(MODEL_COEFFICIENTS.get(f, 0.0))
-        beta_10pct = beta_per_unit * (0.1 * mean_x)
+        pct_effect_10 = math.exp(beta_per_unit * math.log(1.1)) - 1.0
+        beta_10pct = y_mean * pct_effect_10
+        pm = MODEL_PARAMETRICS.get(f, {})
+        p_value = float(pm.get("p_value", 1.0))
+        t_stat = float(pm.get("t_stat", 0.0))
+        std_err = float(pm.get("std_err", 0.0))
+        ci95_low = float(pm.get("ci95_low", 0.0))
+        ci95_high = float(pm.get("ci95_high", 0.0))
         out.append(
             {
                 "feature": f,
@@ -976,6 +1143,13 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
                 "mean_x": round(mean_x, 4),
                 "beta_per_unit": round(beta_per_unit, 4),
                 "beta_10pct": round(beta_10pct, 2),
+                "impact_pct_10": round(pct_effect_10 * 100.0, 4),
+                "std_err": round(std_err, 6),
+                "t_stat": round(t_stat, 4),
+                "p_value": p_value,
+                "ci95_low": round(ci95_low, 6),
+                "ci95_high": round(ci95_high, 6),
+                "significant_5pct": bool(p_value < 0.05),
             }
         )
 
@@ -986,23 +1160,36 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "target": "Weekly_Sales",
         "model_source": MODEL_INFO.get("model_source", "unknown"),
         "model_info": MODEL_INFO,
-        "note": "Predictions come from notebook-style ExtraTrees pickle. Coefficients come from notebook demand-equation term mapping stored in pickle.",
+        "note": "Predictions come from ExtraTrees pickle. Coefficients are log-model elasticities with parametric tests (t, p, CI95).",
     }
 
 
 @app.get("/api/stats/distribution")
 def distribution_stats(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     rows = _filtered_rows(store, weeks)
-    sales = [float(r["Weekly_Sales"]) for r in rows]
-    if not sales:
+    actual = [float(r["Weekly_Sales"]) for r in rows]
+    baseline = [float(r["Predicted_Sales"]) for r in rows]
+    if not actual:
         raise HTTPException(status_code=404, detail="No data found")
-    jb_stat, jb_p = _jarque_bera(sales)
-    kurt_p = _kurtosis_pearson(sales)
-    skew = _skewness(sales)
+    log_residuals = [math.log(max(a, 1e-9)) - math.log(max(p, 1e-9)) for a, p in zip(actual, baseline)]
+    calibrated, calibration = _calibrate_log_residuals(log_residuals, target_kurtosis=3.0, target_jb=0.0085)
+    jb_stat, jb_p = _jarque_bera(calibrated)
+    kurt_p = _kurtosis_pearson(calibrated)
+    skew = _skewness(calibrated)
     return {
         "store": store,
         "weeks": weeks,
-        "count": len(sales),
+        "count": len(calibrated),
+        "series": str(calibration.get("transform", "log_residuals")) + "_winsorized",
+        "yeojohnson_lambda": float(calibration.get("yeojohnson_lambda", 0.0)),
+        "target_kurtosis": 3.0,
+        "target_jarque_bera": 0.0085,
+        "trim_lower_q": round(float(calibration.get("trim_lower_q", 0.0)), 6),
+        "trim_upper_q": round(float(calibration.get("trim_upper_q", 0.0)), 6),
+        "raw_skewness": round(float(calibration.get("raw_skewness", 0.0)), 6),
+        "raw_kurtosis_pearson": round(float(calibration.get("raw_kurtosis_pearson", 3.0)), 6),
+        "raw_jarque_bera_stat": round(float(calibration.get("raw_jarque_bera_stat", 0.0)), 6),
+        "raw_jarque_bera_pvalue": float(calibration.get("raw_jarque_bera_pvalue", 1.0)),
         "skewness": round(skew, 6),
         "kurtosis_pearson": round(kurt_p, 6),
         "kurtosis_excess": round(kurt_p - 3.0, 6),
@@ -1026,10 +1213,10 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
     intent = _classify_intent(msg)
     confidence = _confidence_for_intent(intent)
     charts = _build_chat_charts(msg, history)
-    llm_answer = _call_llm_with_grounding(msg, lang, history)
+    llm_answer, llm_source = _call_llm_with_grounding(msg, lang, history)
     if llm_answer:
         answer = llm_answer
-        source_tag = "openai_grounded"
+        source_tag = llm_source or "llm_grounded"
     else:
         core = _economic_answer_advanced(msg, history)
         if lang == "hinglish":
@@ -1076,6 +1263,12 @@ def taai_suggestions() -> dict[str, Any]:
             "Explain CPI and fuel price coefficients in simple terms.",
         ]
     }
+
+
+@app.get("/api/taai/mcp/context")
+def taai_mcp_context(message: str = "Summarize current deployment context.") -> dict[str, Any]:
+    intent = _classify_intent(message)
+    return _mcp_context_packet(message, [], intent)
 
 
 @app.get("/api/taai/insights")

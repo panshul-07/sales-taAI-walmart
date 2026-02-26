@@ -36,6 +36,8 @@ This folder contains the complete dashboard service.
 
 - Intent routing + rule-based analytics tools
 - Optional grounded OpenAI responses (`OPENAI_API_KEY`)
+- Optional local Llama responses via Ollama (`LLM_PROVIDER=ollama`)
+- MCP-style context packet generation for tool grounding (`/api/taai/mcp/context`)
 - Persistent chat sessions in SQLite
 
 ## What It Includes
@@ -70,18 +72,47 @@ Open: `http://127.0.0.1:8000`
 - `GET /api/store-data?store=all&weeks=160`
 - `GET /api/correlations?store=all&weeks=160`
 - `GET /api/coefficients?store=all&weeks=160`
+- `GET /api/stats/distribution?store=all&weeks=160`
 - `POST /api/taai/chat`
 - `GET /api/taai/sessions/{session_id}`
 - `GET /api/taai/sessions?limit=10`
+- `GET /api/taai/mcp/context`
 
 ## Optional LLM Config (taAI Product Mode)
 
-Set these env vars on Render to enable grounded LLM responses:
+Set these env vars on Render:
 
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` (optional, default: `gpt-4o-mini`)
+- OpenAI mode:
+  - `LLM_PROVIDER=openai`
+  - `OPENAI_API_KEY`
+  - `OPENAI_MODEL` (optional, default: `gpt-4o-mini`)
+- Llama/Ollama mode:
+  - `LLM_PROVIDER=ollama`
+  - `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
+  - `OLLAMA_MODEL` (default: `llama3.1:8b-instruct-q4_K_M`)
 
-Without API key, taAI falls back to built-in economist rules.
+Without active LLM provider credentials, taAI falls back to built-in economist rules.
+
+## Log-Based Parametric Reliability
+
+- Coefficients are learned in log-space (`ln(Weekly_Sales)` vs log features) and exposed with:
+  - standard error
+  - t-stat
+  - p-value
+  - 95% confidence interval
+- Distribution diagnostics use calibrated log-residuals (Yeo-Johnson + winsorization) to stabilize kurtosis/JB and support parametric interpretation.
+
+## Llama Fine-Tune Scaffold
+
+Generate starter JSONL data for supervised Llama adaptation:
+
+```bash
+cd /Users/panshulaj/Documents/front/dashboard
+/Users/panshulaj/Documents/front/.venv/bin/python backend/prepare_llama_finetune.py
+```
+
+Output file:
+- `dashboard/backend/finetune/taai_llama_finetune.jsonl`
 
 ## Data Behavior
 

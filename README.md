@@ -1,6 +1,6 @@
 # Walmart Sales Forecast Dashboard
 
-Production-ready Walmart sales dashboard with a FastAPI backend and responsive frontend.
+Production-ready Walmart sales dashboard with a FastAPI backend, React frontend, notebook-linked model artifact, and taAI chatbot.
 
 ## Live Deployment
 
@@ -9,8 +9,9 @@ Production-ready Walmart sales dashboard with a FastAPI backend and responsive f
 ## Current Stack
 
 - Backend: FastAPI + Uvicorn (`dashboard/backend/server.py`)
-- Frontend: single-page dashboard in vanilla JS/SVG (`dashboard/static/index.html`)
-- Modeling: lightweight forecasting + coefficient-based what-if simulation (pure Python)
+- Frontend: React + Vite build served from `dashboard/static/`
+- Modeling: ExtraTrees artifact + log-space parametric coefficient diagnostics
+- Chatbot LLM: OpenAI or Llama (Ollama) with MCP-style context packets
 - Deployment: Render Blueprint (`dashboard/render.yaml`)
 
 ## Repo Structure

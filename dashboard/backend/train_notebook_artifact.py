@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import os
 import pickle
 from datetime import datetime, timedelta, timezone
@@ -12,7 +13,6 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -127,23 +127,87 @@ def load_csv_data() -> list[dict[str, Any]]:
 
 
 def feature_engineer(rows: list[dict[str, Any]]) -> pd.DataFrame:
-    df = pd.DataFrame(rows).copy()
-    df["Date"] = pd.to_datetime(df["Date"])
+    df = pd.DataFrame.from_records(rows)
+    date_col = pd.to_datetime(df.pop("Date"), errors="coerce")
+    df.insert(1, "Date", date_col)
+    df = df.dropna(subset=["Date"])
     df = df.sort_values(["Store", "Date"]).reset_index(drop=True)
 
-    df["year"] = df["Date"].dt.year
-    df["month"] = df["Date"].dt.month
-    df["weekofyear"] = df["Date"].dt.isocalendar().week.astype(int)
-    df["quarter"] = df["Date"].dt.quarter
-    df["is_month_start"] = df["Date"].dt.is_month_start.astype(int)
-    df["is_month_end"] = df["Date"].dt.is_month_end.astype(int)
-    df["week_sin"] = np.sin(2 * np.pi * df["weekofyear"] / 52)
-    df["week_cos"] = np.cos(2 * np.pi * df["weekofyear"] / 52)
+    df.loc[:, "year"] = df["Date"].dt.year
+    df.loc[:, "month"] = df["Date"].dt.month
+    df.loc[:, "weekofyear"] = df["Date"].dt.isocalendar().week.astype(int)
+    df.loc[:, "quarter"] = df["Date"].dt.quarter
+    df.loc[:, "is_month_start"] = df["Date"].dt.is_month_start.astype(int)
+    df.loc[:, "is_month_end"] = df["Date"].dt.is_month_end.astype(int)
+    df.loc[:, "week_sin"] = np.sin(2 * np.pi * df["weekofyear"] / 52)
+    df.loc[:, "week_cos"] = np.cos(2 * np.pi * df["weekofyear"] / 52)
     for lag in [1, 2, 4, 8]:
-        df[f"sales_lag_{lag}"] = df.groupby("Store")["Weekly_Sales"].shift(lag)
-    df["sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
-    df["sales_roll4_std"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).std()
+        df.loc[:, f"sales_lag_{lag}"] = df.groupby("Store")["Weekly_Sales"].shift(lag)
+    df.loc[:, "sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
+    df.loc[:, "sales_roll4_std"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).std()
     return df.dropna().reset_index(drop=True)
+
+
+def _student_t_sf(value: float, dof: int) -> float:
+    try:
+        from scipy.stats import t as student_t
+
+        return float(student_t.sf(abs(value), dof))
+    except Exception:
+        return 0.5 * math.erfc(abs(value) / math.sqrt(2.0))
+
+
+def _student_t_ppf(prob: float, dof: int) -> float:
+    try:
+        from scipy.stats import t as student_t
+
+        return float(student_t.ppf(prob, dof))
+    except Exception:
+        return 1.959963984540054
+
+
+def _ols_inference(X: np.ndarray, y: np.ndarray, feature_names: list[str]) -> dict[str, Any]:
+    x = np.asarray(X, dtype=float)
+    target = np.asarray(y, dtype=float).reshape(-1)
+    n = x.shape[0]
+    x_design = np.column_stack([np.ones(n), x])
+    names = ["Intercept", *feature_names]
+    p = x_design.shape[1]
+    dof = max(1, n - p)
+
+    xtx_inv = np.linalg.pinv(x_design.T @ x_design)
+    beta = xtx_inv @ x_design.T @ target
+    fitted = x_design @ beta
+    resid = target - fitted
+
+    rss = float(np.dot(resid, resid))
+    tss = float(np.dot(target - float(np.mean(target)), target - float(np.mean(target))))
+    sigma2 = max(rss / dof, 1e-12)
+    cov = sigma2 * xtx_inv
+    se = np.sqrt(np.clip(np.diag(cov), 1e-18, None))
+    t_stats = beta / se
+    p_values = [float(2.0 * _student_t_sf(float(t), dof)) for t in t_stats]
+    t_crit = _student_t_ppf(0.975, dof)
+    ci_low = beta - (t_crit * se)
+    ci_high = beta + (t_crit * se)
+
+    rows: dict[str, dict[str, float]] = {}
+    for i, name in enumerate(names):
+        rows[name] = {
+            "coef": float(beta[i]),
+            "std_err": float(se[i]),
+            "t_stat": float(t_stats[i]),
+            "p_value": float(p_values[i]),
+            "ci95_low": float(ci_low[i]),
+            "ci95_high": float(ci_high[i]),
+        }
+
+    return {
+        "rows": rows,
+        "n_obs": int(n),
+        "dof": int(dof),
+        "r2": float(0.0 if tss <= 0 else 1.0 - (rss / tss)),
+    }
 
 
 def train_artifact() -> dict[str, Any]:
@@ -151,10 +215,26 @@ def train_artifact() -> dict[str, Any]:
     df = feature_engineer(raw_rows)
 
     feature_cols = [
-        "Store", "Holiday_Flag", "Temperature", "Fuel_Price", "CPI", "Unemployment",
-        "year", "month", "weekofyear", "quarter", "is_month_start", "is_month_end",
-        "week_sin", "week_cos", "sales_lag_1", "sales_lag_2", "sales_lag_4", "sales_lag_8",
-        "sales_roll4_mean", "sales_roll4_std",
+        "Store",
+        "Holiday_Flag",
+        "Temperature",
+        "Fuel_Price",
+        "CPI",
+        "Unemployment",
+        "year",
+        "month",
+        "weekofyear",
+        "quarter",
+        "is_month_start",
+        "is_month_end",
+        "week_sin",
+        "week_cos",
+        "sales_lag_1",
+        "sales_lag_2",
+        "sales_lag_4",
+        "sales_lag_8",
+        "sales_roll4_mean",
+        "sales_roll4_std",
     ]
 
     X = df[feature_cols].copy()
@@ -195,25 +275,59 @@ def train_artifact() -> dict[str, Any]:
 
     pred = pipe.predict(X)
     pred_df = df[["Store", "Date"]].copy()
-    pred_df["Predicted_Sales"] = pred
+    pred_df.loc[:, "Predicted_Sales"] = pred
     pred_map = {
         (int(r.Store), pd.Timestamp(r.Date).strftime("%Y-%m-%d")): float(r.Predicted_Sales)
         for r in pred_df.itertuples(index=False)
     }
 
-    # Notebook-like demand-equation coefficient extraction using linear regression on core terms.
-    core_terms = [
-        "Holiday_Flag", "Temperature", "Fuel_Price", "CPI", "Unemployment",
-        "sales_lag_1", "sales_lag_4", "sales_roll4_mean", "sales_roll4_std", "week_sin", "week_cos",
+    ln_cols = [
+        "CPI",
+        "Unemployment",
+        "Fuel_Price",
+        "Temperature",
+        "sales_lag_1",
+        "sales_lag_4",
+        "sales_roll4_mean",
+        "sales_roll4_std",
     ]
-    reg = LinearRegression()
-    reg.fit(df[core_terms], df["Weekly_Sales"])
-    coef_map = {term: float(val) for term, val in zip(core_terms, reg.coef_)}
-    feature_coef = {
-        "CPI": coef_map.get("CPI", 0.0),
-        "Unemployment": coef_map.get("Unemployment", 0.0),
-        "Fuel_Price": coef_map.get("Fuel_Price", 0.0),
-        "Temperature": coef_map.get("Temperature", 0.0),
+    for c in ln_cols:
+        df.loc[:, f"ln_{c}"] = np.log(np.clip(df[c].to_numpy(dtype=float), 1e-6, None))
+    df.loc[:, "ln_Weekly_Sales"] = np.log(np.clip(df["Weekly_Sales"].to_numpy(dtype=float), 1.0, None))
+
+    core_terms = [
+        "Holiday_Flag",
+        "week_sin",
+        "week_cos",
+        "ln_CPI",
+        "ln_Unemployment",
+        "ln_Fuel_Price",
+        "ln_Temperature",
+        "ln_sales_lag_1",
+        "ln_sales_lag_4",
+        "ln_sales_roll4_mean",
+        "ln_sales_roll4_std",
+    ]
+    inference = _ols_inference(df[core_terms].to_numpy(dtype=float), df["ln_Weekly_Sales"].to_numpy(dtype=float), core_terms)
+    coef_map = {term: float(inference["rows"][term]["coef"]) for term in core_terms}
+    feature_term_map = {
+        "CPI": "ln_CPI",
+        "Unemployment": "ln_Unemployment",
+        "Fuel_Price": "ln_Fuel_Price",
+        "Temperature": "ln_Temperature",
+    }
+    feature_coef = {f: coef_map.get(term, 0.0) for f, term in feature_term_map.items()}
+    feature_parametrics = {
+        f: {
+            "term": term,
+            "coef": float(inference["rows"][term]["coef"]),
+            "std_err": float(inference["rows"][term]["std_err"]),
+            "t_stat": float(inference["rows"][term]["t_stat"]),
+            "p_value": float(inference["rows"][term]["p_value"]),
+            "ci95_low": float(inference["rows"][term]["ci95_low"]),
+            "ci95_high": float(inference["rows"][term]["ci95_high"]),
+        }
+        for f, term in feature_term_map.items()
     }
 
     artifact = {
@@ -223,6 +337,10 @@ def train_artifact() -> dict[str, Any]:
         "pred_map": pred_map,
         "coef_table": coef_map,
         "feature_coefficients": feature_coef,
+        "feature_parametrics": feature_parametrics,
+        "coef_inference": inference,
+        "coef_target_transform": "ln(Weekly_Sales)",
+        "coef_feature_transform": "ln(feature) for CPI/Unemployment/Fuel_Price/Temperature",
         "rows_fit": int(len(df)),
         "r2_train": float(pipe.score(X, y)),
     }

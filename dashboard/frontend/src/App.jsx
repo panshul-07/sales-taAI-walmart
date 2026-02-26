@@ -287,7 +287,7 @@ export default function App() {
         <div className="panel inlineChat">
           <div className="chatHead">
             <div>
-              <div className="chatTitle">taAI MathBox</div>
+              <div className="chatTitle">taAI</div>
               <div className="mini">Open-ended project assistant. Ask any question and request charts directly (example: graph for 3 weeks).</div>
             </div>
             <div className="chatHeadBtns">
