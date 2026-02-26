@@ -2,6 +2,10 @@
 
 This folder contains the complete dashboard service.
 
+## Live Deployment
+
+- App: https://sales-panshul-walmart.onrender.com
+
 ## What It Includes
 
 - API endpoints for stores, overview, timeseries rows, correlations, coefficients

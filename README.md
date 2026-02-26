@@ -2,6 +2,10 @@
 
 Production-ready Walmart sales dashboard with a FastAPI backend and responsive frontend.
 
+## Live Deployment
+
+- App: https://sales-panshul-walmart.onrender.com
+
 ## Current Stack
 
 - Backend: FastAPI + Uvicorn (`dashboard/backend/server.py`)

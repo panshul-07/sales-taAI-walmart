@@ -2,6 +2,10 @@
 
 This dashboard frontend is implemented with React and built using Vite.
 
+## Live Deployment
+
+- App: https://sales-panshul-walmart.onrender.com
+
 ## Local Dev
 
 ```bash
