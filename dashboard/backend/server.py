@@ -171,6 +171,8 @@ def _filtered_rows(store: str, weeks: int) -> list[dict[str, Any]]:
 
 def _detect_language(text: str) -> str:
     t = text.lower()
+    if any("\u0900" <= ch <= "\u097f" for ch in text):
+        return "hindi"
     if any(k in t for k in ["kya", "kaise", "kyu", "kyun", "batao", "samjhao", "hai", "nahi"]):
         return "hinglish"
     return "english"
@@ -181,6 +183,22 @@ def _economic_answer(message: str) -> str:
     rows = _filtered_rows("all", 160)
     avg_sales = mean([float(r["Weekly_Sales"]) for r in rows])
     peak_sales = max([float(r["Weekly_Sales"]) for r in rows])
+    pred_avg = mean([float(r["Predicted_Sales"]) for r in rows])
+    pred_gap_pct = ((pred_avg - avg_sales) / max(avg_sales, 1.0)) * 100.0
+
+    if any(k in q for k in ["why", "drop", "fall", "decline", "cause", "reason", "impact"]):
+        ranked = sorted(
+            [(f, abs(float(MODEL_COEFFICIENTS.get(f, 0.0)))) for f in FEATURES],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        drivers = ", ".join([f"{name} ({val:.3f})" for name, val in ranked[:3]])
+        return (
+            "Causal-style diagnostics using current deployed coefficients:\n"
+            f"- Top sensitivity drivers: {drivers}\n"
+            "- Holiday spikes and seasonal waves are also visible in trend decomposition.\n"
+            "- Use What-If sliders to test counterfactual scenarios."
+        )
 
     if "coefficient" in q or "beta" in q:
         return "\n".join(
@@ -189,10 +207,30 @@ def _economic_answer(message: str) -> str:
                 *[f"- {f}: {float(MODEL_COEFFICIENTS.get(f, 0.0)):.4f}" for f in FEATURES],
             ]
         )
-    if "forecast" in q or "predict" in q:
-        pred_avg = mean([float(r["Predicted_Sales"]) for r in rows])
-        return f"Baseline forecast average weekly sales: {pred_avg:,.0f}."
-    return f"Average weekly sales are {avg_sales:,.0f}; peak weekly sales are {peak_sales:,.0f}."
+    if any(k in q for k in ["forecast", "predict", "scenario"]):
+        optimistic = pred_avg * 1.06
+        pessimistic = pred_avg * 0.94
+        return (
+            "Scenario forecast summary:\n"
+            f"- Base case avg weekly sales: {pred_avg:,.0f}\n"
+            f"- Optimistic (+6%): {optimistic:,.0f}\n"
+            f"- Pessimistic (-6%): {pessimistic:,.0f}\n"
+            f"- Baseline gap vs actual: {pred_gap_pct:+.2f}%"
+        )
+    if any(k in q for k in ["compare", "store", "best", "top"]):
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for r in MODEL_ROWS:
+            grouped.setdefault(int(r["Store"]), []).append(r)
+        top = sorted(
+            [(sid, mean([float(x["Weekly_Sales"]) for x in vals])) for sid, vals in grouped.items()],
+            key=lambda x: x[1],
+            reverse=True,
+        )[:3]
+        return "Top stores by avg weekly sales: " + ", ".join([f"Store {sid} ({val:,.0f})" for sid, val in top])
+    return (
+        f"Current aggregate metrics: avg weekly sales {avg_sales:,.0f}, peak {peak_sales:,.0f}, baseline prediction avg {pred_avg:,.0f}. "
+        "Ask for forecast scenarios, coefficient interpretation, causal diagnostics, or store comparisons."
+    )
 
 
 app = FastAPI(title="Walmart Forecast API", version="6.0.0")
@@ -322,7 +360,12 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
 
     lang = _detect_language(msg)
     core = _economic_answer(msg)
-    answer = f"taAI insight: {core}" if lang == "english" else f"taAI insight: {core}\nAgar chaho to aur detail de sakta hoon."
+    if lang == "hinglish":
+        answer = f"taAI insight: {core}\nAgar chaho toh main detailed economic breakdown bhi de sakta hoon."
+    elif lang == "hindi":
+        answer = f"taAI विश्लेषण: {core}\nअगर चाहें तो मैं इसे चरण-दर-चरण और विस्तार से समझा सकता हूँ।"
+    else:
+        answer = f"taAI insight: {core}"
 
     history.append({"role": "assistant", "content": answer})
     if len(history) > 16:

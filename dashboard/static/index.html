@@ -144,6 +144,107 @@
         border-color: rgba(22, 182, 173, .7);
         box-shadow: 0 0 0 2px rgba(22, 182, 173, .2) inset;
       }
+      .chatFab {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 50;
+        background: linear-gradient(135deg, #16b6ad, #42d4c7);
+        color: #062026;
+        border: 0;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 12px 18px;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.32);
+        cursor: pointer;
+      }
+      .chatPanel {
+        position: fixed;
+        right: 18px;
+        bottom: 70px;
+        width: min(390px, calc(100vw - 24px));
+        max-height: 72vh;
+        z-index: 49;
+        display: none;
+        flex-direction: column;
+        background: linear-gradient(180deg, rgba(7, 35, 44, .98), rgba(9, 29, 40, .98));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+      }
+      .chatPanel.open { display: flex; }
+      .chatHead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .chatBody {
+        overflow-y: auto;
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+        max-height: 45vh;
+      }
+      .msg {
+        max-width: 88%;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 1.35;
+        white-space: pre-wrap;
+      }
+      .msg.user {
+        justify-self: end;
+        background: rgba(80, 139, 255, .18);
+        border: 1px solid rgba(127, 182, 255, .32);
+      }
+      .msg.bot {
+        justify-self: start;
+        background: rgba(22, 182, 173, .14);
+        border: 1px solid rgba(22, 182, 173, .28);
+      }
+      .chatQuick {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .quickBtn {
+        font-size: 11px;
+        border: 1px solid var(--border);
+        background: var(--control-bg);
+        color: var(--txt);
+        border-radius: 999px;
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      .chatInput {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .chatInput input {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--control-bg);
+        color: var(--txt);
+        padding: 8px 10px;
+      }
+      .chatInput button {
+        border: 0;
+        border-radius: 10px;
+        background: #16b6ad;
+        color: #062026;
+        font-weight: 700;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
       @media (max-width: 1180px) {
         .span-8, .span-6, .span-4 { grid-column: span 12; }
         .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -260,6 +361,28 @@
         </div>
       </div>
     </div>
+    <button id="chatFab" class="chatFab" type="button">taAI</button>
+    <div id="chatPanel" class="chatPanel" aria-live="polite">
+      <div class="chatHead">
+        <div>
+          <div style="font-weight:700;">taAI Economist Assistant</div>
+          <div class="mini">Hinglish/English financial analysis</div>
+        </div>
+        <button id="chatClose" class="quickBtn" type="button">Close</button>
+      </div>
+      <div id="chatBody" class="chatBody">
+        <div class="msg bot">taAI is ready. Ask anything about forecast, causality, coefficients, or store comparisons.</div>
+      </div>
+      <div class="chatQuick">
+        <button class="quickBtn" data-prompt="Give me a 3-scenario forecast summary">3-scenario forecast</button>
+        <button class="quickBtn" data-prompt="Why did sales drop? Give main drivers">Why did sales drop?</button>
+        <button class="quickBtn" data-prompt="Explain coefficients in simple terms">Explain coefficients</button>
+      </div>
+      <div class="chatInput">
+        <input id="chatText" type="text" placeholder="Ask taAI..." />
+        <button id="chatSend" type="button">Send</button>
+      </div>
+    </div>
 
     <script>
       const FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"];
@@ -271,6 +394,9 @@
         corr: [],
         coef: [],
         adjustments: { CPI: 0, Unemployment: 0, Fuel_Price: 0, Temperature: 0 },
+        chatSessionId: localStorage.getItem("taai_session_id") || "",
+        chatOpen: false,
+        chatBusy: false,
       };
       const setTheme = (theme) => {
         document.body.setAttribute("data-theme", theme);
@@ -295,6 +421,49 @@
       };
       const chartBg = () => getComputedStyle(document.body).getPropertyValue("--chart-bg").trim() || "#101a2d";
       const api = (path) => fetch(path).then((r) => { if (!r.ok) throw new Error(path + " failed"); return r.json(); });
+
+      function appendChat(role, content) {
+        const body = document.getElementById("chatBody");
+        const node = document.createElement("div");
+        node.className = `msg ${role === "user" ? "user" : "bot"}`;
+        node.textContent = content;
+        body.appendChild(node);
+        body.scrollTop = body.scrollHeight;
+      }
+
+      function setChatOpen(open) {
+        state.chatOpen = open;
+        document.getElementById("chatPanel").classList.toggle("open", open);
+      }
+
+      async function sendChatMessage(msgRaw) {
+        const msg = String(msgRaw || "").trim();
+        if (!msg || state.chatBusy) return;
+        state.chatBusy = true;
+        appendChat("user", msg);
+        appendChat("bot", "taAI is analyzing...");
+
+        try {
+          const res = await fetch("/api/taai/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: msg, session_id: state.chatSessionId || null }),
+          });
+          if (!res.ok) throw new Error(`chat failed (${res.status})`);
+          const data = await res.json();
+          state.chatSessionId = data.session_id || state.chatSessionId;
+          if (state.chatSessionId) localStorage.setItem("taai_session_id", state.chatSessionId);
+          const body = document.getElementById("chatBody");
+          if (body.lastElementChild && body.lastElementChild.textContent === "taAI is analyzing...") body.lastElementChild.remove();
+          appendChat("bot", data.answer || "No response");
+        } catch (err) {
+          const body = document.getElementById("chatBody");
+          if (body.lastElementChild && body.lastElementChild.textContent === "taAI is analyzing...") body.lastElementChild.remove();
+          appendChat("bot", `Error: ${String(err)}`);
+        } finally {
+          state.chatBusy = false;
+        }
+      }
 
       function pearson(xs, ys) {
         const n = Math.min(xs.length, ys.length);
@@ -527,6 +696,23 @@
         setTheme("dark");
         document.getElementById("themeDark").onclick = () => setTheme("dark");
         document.getElementById("themeLight").onclick = () => setTheme("light");
+        document.getElementById("chatFab").onclick = () => setChatOpen(!state.chatOpen);
+        document.getElementById("chatClose").onclick = () => setChatOpen(false);
+        document.getElementById("chatSend").onclick = () => {
+          const i = document.getElementById("chatText");
+          sendChatMessage(i.value);
+          i.value = "";
+        };
+        document.getElementById("chatText").addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            const i = document.getElementById("chatText");
+            sendChatMessage(i.value);
+            i.value = "";
+          }
+        });
+        for (const btn of document.querySelectorAll(".quickBtn[data-prompt]")) {
+          btn.onclick = () => sendChatMessage(btn.getAttribute("data-prompt"));
+        }
 
         document.getElementById("store").onchange = async (e) => {
           state.store = e.target.value;
