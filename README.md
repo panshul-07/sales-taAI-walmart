@@ -17,6 +17,7 @@ Production-ready Walmart sales dashboard with a FastAPI backend and responsive f
 
 - `dashboard/backend/server.py`: API + static file serving
 - `dashboard/static/index.html`: dashboard UI and chart logic
+- `walmart_ai_extension/`: new full-stack AI chatbot platform (FastAPI + React + Postgres + LangChain + Plotly)
 - `dashboard/requirements.txt`: runtime dependencies
 - `dashboard/render.yaml`: Render deploy config
 - `dashboard/README.md`: dashboard-level run/API details
