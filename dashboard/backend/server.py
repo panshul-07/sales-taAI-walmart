@@ -4,6 +4,7 @@ import math
 import json
 import os
 import pickle
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -150,6 +151,42 @@ def _std(values: list[float]) -> float:
     return math.sqrt(max(var, 0.0))
 
 
+def _kurtosis_pearson(values: list[float]) -> float:
+    n = len(values)
+    if n < 4:
+        return 3.0
+    m = sum(values) / n
+    m2 = sum((v - m) ** 2 for v in values) / n
+    if m2 == 0:
+        return 3.0
+    m4 = sum((v - m) ** 4 for v in values) / n
+    return m4 / (m2 * m2)
+
+
+def _skewness(values: list[float]) -> float:
+    n = len(values)
+    if n < 3:
+        return 0.0
+    m = sum(values) / n
+    m2 = sum((v - m) ** 2 for v in values) / n
+    if m2 == 0:
+        return 0.0
+    m3 = sum((v - m) ** 3 for v in values) / n
+    return m3 / (m2 ** 1.5)
+
+
+def _jarque_bera(values: list[float]) -> tuple[float, float]:
+    n = len(values)
+    if n < 3:
+        return 0.0, 1.0
+    s = _skewness(values)
+    k = _kurtosis_pearson(values)
+    jb = (n / 6.0) * (s * s + ((k - 3.0) ** 2) / 4.0)
+    # chi-square(df=2) survival function = exp(-x/2)
+    p = math.exp(-jb / 2.0)
+    return jb, p
+
+
 def _load_or_train_artifact() -> dict[str, Any]:
     if ARTIFACT_PATH.exists():
         try:
@@ -263,6 +300,10 @@ def _detect_language(text: str) -> str:
 
 def _classify_intent(text: str) -> str:
     q = text.lower()
+    if any(k in q for k in ["highest", "maximum", "max", "peak", "lowest", "minimum", "min"]):
+        return "extrema_analysis"
+    if any(k in q for k in ["when", "date", "which week"]):
+        return "date_lookup"
     if any(k in q for k in ["why", "cause", "reason", "drop", "decline", "impact"]):
         return "causal_analysis"
     if any(k in q for k in ["forecast", "predict", "scenario", "next", "future"]):
@@ -278,6 +319,8 @@ def _classify_intent(text: str) -> str:
 
 def _confidence_for_intent(intent: str) -> float:
     mapping = {
+        "extrema_analysis": 0.93,
+        "date_lookup": 0.90,
         "causal_analysis": 0.78,
         "forecasting": 0.84,
         "comparative_analysis": 0.88,
@@ -327,14 +370,53 @@ def _analysis_snapshot(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     }
 
 
+def _extract_top_n(q: str, default: int = 3) -> int:
+    m = re.search(r"\btop\s+(\d+)\b", q)
+    if m:
+        try:
+            return max(1, min(15, int(m.group(1))))
+        except ValueError:
+            return default
+    return default
+
+
+def _store_rankings() -> list[tuple[int, float]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for r in MODEL_ROWS:
+        grouped.setdefault(int(r["Store"]), []).append(r)
+    return sorted(
+        [(sid, mean([float(x["Weekly_Sales"]) for x in vals])) for sid, vals in grouped.items()],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+
 def _economic_answer(message: str) -> str:
     q = message.lower()
     intent = _classify_intent(message)
     rows = _filtered_rows("all", 160)
     avg_sales = mean([float(r["Weekly_Sales"]) for r in rows])
     peak_sales = max([float(r["Weekly_Sales"]) for r in rows])
+    low_sales = min([float(r["Weekly_Sales"]) for r in rows])
     pred_avg = mean([float(r["Predicted_Sales"]) for r in rows])
     pred_gap_pct = ((pred_avg - avg_sales) / max(avg_sales, 1.0)) * 100.0
+
+    if intent in {"extrema_analysis", "date_lookup"}:
+        peak_row = max(rows, key=lambda r: float(r["Weekly_Sales"]))
+        low_row = min(rows, key=lambda r: float(r["Weekly_Sales"]))
+        if any(k in q for k in ["lowest", "minimum", "min"]):
+            return (
+                "Lowest observed aggregate week in current window:\n"
+                f"- Date: {low_row['Date']}\n"
+                f"- Weekly sales: {float(low_row['Weekly_Sales']):,.0f}\n"
+                f"- Baseline prediction: {float(low_row['Predicted_Sales']):,.0f}"
+            )
+        return (
+            "Highest observed aggregate week in current window:\n"
+            f"- Date: {peak_row['Date']}\n"
+            f"- Weekly sales: {float(peak_row['Weekly_Sales']):,.0f}\n"
+            f"- Baseline prediction: {float(peak_row['Predicted_Sales']):,.0f}"
+        )
 
     if intent == "causal_analysis":
         ranked = sorted(
@@ -368,15 +450,9 @@ def _economic_answer(message: str) -> str:
             f"- Baseline gap vs actual: {pred_gap_pct:+.2f}%"
         )
     if intent == "comparative_analysis":
-        grouped: dict[int, list[dict[str, Any]]] = {}
-        for r in MODEL_ROWS:
-            grouped.setdefault(int(r["Store"]), []).append(r)
-        top = sorted(
-            [(sid, mean([float(x["Weekly_Sales"]) for x in vals])) for sid, vals in grouped.items()],
-            key=lambda x: x[1],
-            reverse=True,
-        )[:3]
-        return "Top stores by avg weekly sales: " + ", ".join([f"Store {sid} ({val:,.0f})" for sid, val in top])
+        n = _extract_top_n(q, default=3)
+        top = _store_rankings()[:n]
+        return f"Top {n} stores by avg weekly sales: " + ", ".join([f"Store {sid} ({val:,.0f})" for sid, val in top])
     if intent == "anomaly_analysis":
         snap = _analysis_snapshot("all", 160)
         return (
@@ -387,8 +463,8 @@ def _economic_answer(message: str) -> str:
             "- Review high-residual periods and holiday/context events for root-cause validation."
         )
     return (
-        f"Current aggregate metrics: avg weekly sales {avg_sales:,.0f}, peak {peak_sales:,.0f}, baseline prediction avg {pred_avg:,.0f}. "
-        "Ask for forecast scenarios, coefficient interpretation, causal diagnostics, anomaly scan, or store comparisons."
+        f"Current aggregate metrics: avg weekly sales {avg_sales:,.0f}, peak {peak_sales:,.0f}, lowest {low_sales:,.0f}, baseline prediction avg {pred_avg:,.0f}. "
+        "You can ask: highest/lowest week, top N stores, coefficient interpretation, forecast scenarios, anomaly scan, or causal diagnostics."
     )
 
 
@@ -592,6 +668,28 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     }
 
 
+@app.get("/api/stats/distribution")
+def distribution_stats(store: str = "all", weeks: int = 160) -> dict[str, Any]:
+    rows = _filtered_rows(store, weeks)
+    sales = [float(r["Weekly_Sales"]) for r in rows]
+    if not sales:
+        raise HTTPException(status_code=404, detail="No data found")
+    jb_stat, jb_p = _jarque_bera(sales)
+    kurt_p = _kurtosis_pearson(sales)
+    skew = _skewness(sales)
+    return {
+        "store": store,
+        "weeks": weeks,
+        "count": len(sales),
+        "skewness": round(skew, 6),
+        "kurtosis_pearson": round(kurt_p, 6),
+        "kurtosis_excess": round(kurt_p - 3.0, 6),
+        "jarque_bera_stat": round(jb_stat, 6),
+        "jarque_bera_pvalue": jb_p,
+        "normality_rejected_5pct": bool(jb_p < 0.05),
+    }
+
+
 @app.post("/api/taai/chat", response_model=ChatResponse)
 def taai_chat(payload: ChatRequest) -> ChatResponse:
     msg = (payload.message or "").strip()
@@ -645,11 +743,11 @@ def taai_sessions(limit: int = 20) -> dict[str, Any]:
 def taai_suggestions() -> dict[str, Any]:
     return {
         "suggestions": [
+            "When was the highest sales week and what value?",
+            "When was the lowest sales week and what value?",
+            "Compare top 5 stores by average weekly sales.",
             "Give me a 3-scenario forecast summary for next quarter.",
-            "Why did sales drop recently? Show probable drivers.",
-            "Compare top 3 stores by average weekly sales.",
             "Explain CPI and fuel price coefficients in simple terms.",
-            "Run anomaly scan and summarize unusual weeks.",
         ]
     }
 

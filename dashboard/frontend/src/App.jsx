@@ -83,6 +83,7 @@ export default function App() {
   const [chatSessions, setChatSessions] = useState([]);
   const [chatSuggestions, setChatSuggestions] = useState([]);
   const [insights, setInsights] = useState(null);
+  const [distStats, setDistStats] = useState(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -158,6 +159,12 @@ export default function App() {
       setInsights(ins);
     } catch {
       setInsights(null);
+    }
+    try {
+      const ds = await api(`/api/stats/distribution?${q}`);
+      setDistStats(ds);
+    } catch {
+      setDistStats(null);
     }
   }
 
@@ -319,6 +326,8 @@ export default function App() {
               <div className="mini">Avg actual: {money(insights?.snapshot?.avg_sales || 0)} | Avg predicted: {money(insights?.snapshot?.avg_pred || 0)}</div>
               <div className="mini">Residual mean: {compact(insights?.snapshot?.residual_mean || 0)} | Residual std: {compact(insights?.snapshot?.residual_std || 0)}</div>
               <div className="mini">Estimated anomaly weeks: {Number(insights?.snapshot?.anomaly_count || 0)}</div>
+              <div className="mini">Skewness: {Number(distStats?.skewness || 0).toFixed(3)} | Kurtosis (Pearson): {Number(distStats?.kurtosis_pearson || 0).toFixed(3)}</div>
+              <div className="mini">JB: {compact(distStats?.jarque_bera_stat || 0)} | p-value: {Number(distStats?.jarque_bera_pvalue || 0).toExponential(2)}</div>
             </div>
           </div>
         </div>
