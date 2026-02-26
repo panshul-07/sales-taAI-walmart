@@ -31,15 +31,33 @@
         },
       };
     </script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.7/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
   </head>
   <body class="bg-slate-100 text-slate-900 dark bg-ta-bg dark:text-ta-text">
     <div id="root"></div>
+    <script>
+      window.__LIBS_OK = !!(window.React && window.ReactDOM && window.Babel && window.Recharts);
+      if (!window.__LIBS_OK) {
+        const root = document.getElementById("root");
+        root.innerHTML = '<div style="padding:24px;color:#e8f3f6;font-family:ui-sans-serif,system-ui;background:#06161c;min-height:100vh">Dashboard failed to load client libraries. Hard refresh and redeploy latest commit.</div>';
+      }
+      window.addEventListener("error", function (evt) {
+        const root = document.getElementById("root");
+        if (root && !root.innerHTML.trim()) {
+          root.innerHTML = '<div style="padding:24px;color:#e8f3f6;font-family:ui-sans-serif,system-ui;background:#06161c;min-height:100vh">Runtime error: ' + String(evt.message || "unknown error") + "</div>";
+        }
+      });
+    </script>
 
     <script type="text/babel">
+      if (!window.__LIBS_OK) {
+        throw new Error("client libraries missing");
+      }
+
+      const RechartsLib = window.Recharts || {};
       const {
         LineChart,
         Line,
@@ -51,7 +69,7 @@
         CartesianGrid,
         ResponsiveContainer,
         Legend,
-      } = window.Recharts;
+      } = RechartsLib;
 
       const FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"];
       const fmtMoney = (n) =>
