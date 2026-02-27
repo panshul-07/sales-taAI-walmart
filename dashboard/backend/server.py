@@ -37,6 +37,7 @@ MODEL_INFO: dict[str, Any] = {}
 CHAT_SESSIONS: dict[str, list[dict[str, str]]] = {}
 SCHEDULER: BackgroundScheduler | None = None
 RAG_ENGINE = TaAIRAG(BASE_DIR)
+LAST_OLLAMA_ERROR: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -1072,7 +1073,37 @@ def _mcp_context_packet(user_message: str, history: list[dict[str, str]], intent
     }
 
 
+def _ollama_headers() -> dict[str, str]:
+    # ngrok free endpoints may require this header to bypass the browser warning page.
+    return {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+        "User-Agent": "taAI/1.0",
+    }
+
+
+def _probe_ollama(base: str) -> tuple[bool, str]:
+    req = urlrequest.Request(f"{base}/api/tags", headers=_ollama_headers(), method="GET")
+    try:
+        with urlrequest.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", errors="ignore")
+            if resp.status >= 400:
+                return False, f"http_{resp.status}"
+    except urlerror.HTTPError as e:
+        return False, f"http_{e.code}"
+    except (urlerror.URLError, TimeoutError, OSError):
+        return False, "network_unreachable"
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return False, "non_json_response"
+    if not isinstance(parsed, dict) or "models" not in parsed:
+        return False, "unexpected_payload"
+    return True, "ok"
+
+
 def _call_ollama_with_grounding(system_prompt: str, combined_user: str) -> str | None:
+    global LAST_OLLAMA_ERROR
     base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
     model = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
     payload = {
@@ -1087,17 +1118,29 @@ def _call_ollama_with_grounding(system_prompt: str, combined_user: str) -> str |
     req = urlrequest.Request(
         f"{base}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=_ollama_headers(),
         method="POST",
     )
     try:
         with urlrequest.urlopen(req, timeout=45) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError):
+            raw = resp.read().decode("utf-8", errors="ignore")
+            body = json.loads(raw)
+    except urlerror.HTTPError as e:
+        LAST_OLLAMA_ERROR = f"http_{e.code}"
+        return None
+    except json.JSONDecodeError:
+        LAST_OLLAMA_ERROR = "non_json_response"
+        return None
+    except (urlerror.URLError, TimeoutError, OSError):
+        LAST_OLLAMA_ERROR = "network_unreachable"
         return None
     msg = body.get("message", {})
     out = msg.get("content") if isinstance(msg, dict) else None
-    return str(out).strip() if isinstance(out, str) and out.strip() else None
+    if isinstance(out, str) and out.strip():
+        LAST_OLLAMA_ERROR = None
+        return str(out).strip()
+    LAST_OLLAMA_ERROR = "empty_content"
+    return None
 
 
 def _call_llm_with_grounding(user_message: str, language: str, history: list[dict[str, str]]) -> tuple[str | None, str | None]:
@@ -1158,6 +1201,8 @@ def on_startup() -> None:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    reachable, probe_status = _probe_ollama(ollama_base)
     return {
         "status": "ok",
         "rows": len(MODEL_ROWS),
@@ -1166,6 +1211,12 @@ def health() -> dict[str, Any]:
         "chatbot": "taAI",
         "llm_provider": os.getenv("LLM_PROVIDER", "ollama"),
         "llama_required": True,
+        "ollama_base_url": ollama_base,
+        "ollama_probe": {
+            "reachable": reachable,
+            "status": probe_status,
+            "last_chat_error": LAST_OLLAMA_ERROR,
+        },
     }
 
 
