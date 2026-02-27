@@ -11,7 +11,7 @@ Production-ready Walmart sales dashboard with a FastAPI backend, React frontend,
 - Backend: FastAPI + Uvicorn (`dashboard/backend/server.py`)
 - Frontend: React + Vite build served from `dashboard/static/`
 - Modeling: ExtraTrees artifact + log-space parametric coefficient diagnostics
-- Chatbot LLM: OpenAI or Llama (Ollama) with MCP-style context packets
+- Chatbot LLM: Llama via Ollama (mandatory) with MCP-style context packets
 - Deployment: Render Blueprint (`dashboard/render.yaml`)
 
 ## Repo Structure

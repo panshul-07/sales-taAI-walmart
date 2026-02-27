@@ -35,8 +35,7 @@ This folder contains the complete dashboard service.
 ### LLM Agent System
 
 - Intent routing + rule-based analytics tools
-- Optional grounded OpenAI responses (`OPENAI_API_KEY`)
-- Optional local Llama responses via Ollama (`LLM_PROVIDER=ollama`)
+- Mandatory Llama responses via Ollama (`LLM_PROVIDER=ollama`)
 - MCP-style context packet generation for tool grounding (`/api/taai/mcp/context`)
 - Persistent chat sessions in SQLite
 
@@ -78,20 +77,15 @@ Open: `http://127.0.0.1:8000`
 - `GET /api/taai/sessions?limit=10`
 - `GET /api/taai/mcp/context`
 
-## Optional LLM Config (taAI Product Mode)
+## Required LLM Config (taAI Product Mode)
 
 Set these env vars on Render:
 
-- OpenAI mode:
-  - `LLM_PROVIDER=openai`
-  - `OPENAI_API_KEY`
-  - `OPENAI_MODEL` (optional, default: `gpt-4o-mini`)
-- Llama/Ollama mode:
-  - `LLM_PROVIDER=ollama`
-  - `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
-  - `OLLAMA_MODEL` (default: `llama3.1:8b-instruct-q4_K_M`)
+- `LLM_PROVIDER=ollama`
+- `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
+- `OLLAMA_MODEL` (default: `llama3.1:8b-instruct-q4_K_M`)
 
-Without active LLM provider credentials, taAI falls back to built-in economist rules.
+If Ollama is unreachable, taAI returns a configuration/runtime warning for chat requests.
 
 ## Log-Based Parametric Reliability
 

@@ -1101,10 +1101,11 @@ def _call_ollama_with_grounding(system_prompt: str, combined_user: str) -> str |
 
 
 def _call_llm_with_grounding(user_message: str, language: str, history: list[dict[str, str]]) -> tuple[str | None, str | None]:
-    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    # Llama is mandatory for taAI conversational generation.
+    provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    if provider not in {"ollama", "llama", "llama3", "llama-3"}:
+        return None, "llama_required_not_configured"
 
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     system_prompt = (
         "You are taAI, a Walmart financial economist assistant. "
         "Respond with: 1) direct answer, 2) key drivers, 3) implication/recommendation. "
@@ -1132,52 +1133,10 @@ def _call_llm_with_grounding(user_message: str, language: str, history: list[dic
         f"Current user question:\n{user_message}"
     )
 
-    if provider in {"ollama", "llama", "llama3", "llama-3"}:
-        llama_answer = _call_ollama_with_grounding(system_prompt, combined_user)
-        if llama_answer:
-            return llama_answer, "llama_grounded_mcp"
-        return None, None
-
-    if not api_key:
-        return None, None
-
-    payload = {
-        "model": model,
-        "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
-            {"role": "user", "content": [{"type": "input_text", "text": combined_user}]},
-        ],
-        "temperature": 0.2,
-        "max_output_tokens": 500,
-    }
-
-    req = urlrequest.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urlrequest.urlopen(req, timeout=25) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return None, None
-
-    text = body.get("output_text")
-    if isinstance(text, str) and text.strip():
-        return text.strip(), "openai_grounded_mcp"
-
-    output = body.get("output", [])
-    parts: list[str] = []
-    for item in output:
-        for c in item.get("content", []):
-            if c.get("type") == "output_text" and c.get("text"):
-                parts.append(str(c["text"]))
-    final = "\n".join(parts).strip()
-    return (final, "openai_grounded_mcp") if final else (None, None)
+    llama_answer = _call_ollama_with_grounding(system_prompt, combined_user)
+    if llama_answer:
+        return llama_answer, "llama_grounded_mcp"
+    return None, "llama_unavailable"
 
 
 app = FastAPI(title="Walmart Forecast API", version="6.0.0")
@@ -1205,7 +1164,8 @@ def health() -> dict[str, Any]:
         "model_source": MODEL_INFO.get("model_source", "unknown"),
         "model_info": MODEL_INFO,
         "chatbot": "taAI",
-        "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
+        "llm_provider": os.getenv("LLM_PROVIDER", "ollama"),
+        "llama_required": True,
     }
 
 
@@ -1366,14 +1326,22 @@ def taai_chat(payload: ChatRequest) -> ChatResponse:
         answer = llm_answer
         source_tag = llm_source or "llm_grounded"
     else:
-        core = _economic_answer_advanced(msg, history)
-        if lang == "hinglish":
-            answer = f"{core}\nAgar required ho, main detailed economic decomposition bhi de sakta hoon."
-        elif lang == "hindi":
-            answer = f"{core}\nआवश्यक होने पर मैं इसे चरण-दर-चरण विस्तार से समझा सकता हूँ।"
+        if llm_source in {"llama_required_not_configured", "llama_unavailable"}:
+            answer = (
+                "taAI requires Llama (Ollama) for chat generation, but it is not reachable right now.\n"
+                "Set `LLM_PROVIDER=ollama`, configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and ensure the model is running.\n"
+                "Once Llama is up, ask the same question again."
+            )
+            source_tag = llm_source
         else:
-            answer = core
-        source_tag = "rule_based_fallback"
+            core = _economic_answer_advanced(msg, history)
+            if lang == "hinglish":
+                answer = f"{core}\nAgar required ho, main detailed economic decomposition bhi de sakta hoon."
+            elif lang == "hindi":
+                answer = f"{core}\nआवश्यक होने पर मैं इसे चरण-दर-चरण विस्तार से समझा सकता हूँ।"
+            else:
+                answer = core
+            source_tag = "rule_based_fallback"
 
     _save_chat_message(session_id, "assistant", answer)
 
@@ -1475,7 +1443,7 @@ def taai_architecture() -> dict[str, Any]:
             ],
             "llm_agent_system": [
                 "Intent routing + deterministic analytics tools",
-                "Grounded LLM responses when OPENAI_API_KEY is configured",
+                "Llama-only grounded responses via Ollama",
                 "Fallback rule-based economist engine for reliability",
             ],
         },
