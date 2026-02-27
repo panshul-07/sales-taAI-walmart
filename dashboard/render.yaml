@@ -7,6 +7,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11
+      - key: LLM_PROVIDER
+        value: ollama
+      - key: OLLAMA_MODEL
+        value: llama3.1:8b-instruct-q4_K_M
+      - key: OLLAMA_BASE_URL
+        sync: false
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
     autoDeploy: true
