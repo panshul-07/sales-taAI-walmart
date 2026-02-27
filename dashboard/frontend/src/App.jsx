@@ -63,6 +63,19 @@ const fitLine = (points) => {
   const corr = (vx && vy) ? cov / Math.sqrt(vx * vy) : 0;
   return { slope, intercept, corr, r2: corr * corr };
 };
+const toGoogleAllDayRange = (dateStr) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const next = new Date(d);
+  next.setDate(next.getDate() + 1);
+  const fmt = (x) => {
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  };
+  return `${fmt(d)}/${fmt(next)}`;
+};
 
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
@@ -136,6 +149,17 @@ export default function App() {
   ), [scatterXMin, scatterXMax, scatterFit]);
 
   const simulatedAvg = useMemo(() => adjustedRows.length ? adjustedRows.reduce((a, b) => a + Number(b.Simulated_Sales), 0) / adjustedRows.length : 0, [adjustedRows]);
+  const openCalendarForPoint = (dateStr, title, details) => {
+    const range = toGoogleAllDayRange(String(dateStr || ''));
+    if (!range) return;
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: title || 'taAI Sales Review',
+      dates: range,
+      details: details || 'Generated from taAI dashboard',
+    });
+    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank', 'noopener,noreferrer');
+  };
 
   async function loadData() {
     setStatus('Loading...');
@@ -312,7 +336,17 @@ export default function App() {
                         <div className="chatChartWrap">
                           <ResponsiveContainer width="100%" height="100%">
                             {c.type === 'bar' ? (
-                              <BarChart data={c.data || []}>
+                              <BarChart
+                                data={c.data || []}
+                                onClick={(state) => {
+                                  const payload = state?.activePayload?.[0]?.payload || {};
+                                  const xKey = c.x || 'x';
+                                  const xVal = payload?.[xKey];
+                                  if (xKey.toLowerCase() === 'date' || /^\d{4}-\d{2}-\d{2}$/.test(String(xVal || ''))) {
+                                    openCalendarForPoint(String(xVal), c.title || 'taAI chart event', `Bar metric from taAI: ${JSON.stringify(payload)}`);
+                                  }
+                                }}
+                              >
                                 <CartesianGrid stroke="rgba(255,255,255,.08)" />
                                 <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
                                 <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
@@ -320,7 +354,16 @@ export default function App() {
                                 <Bar dataKey={c.ys?.[0] || 'y'} fill="#2ecdc4" radius={[4, 4, 0, 0]} />
                               </BarChart>
                             ) : (
-                              <LineChart data={c.data || []}>
+                              <LineChart
+                                data={c.data || []}
+                                onClick={(state) => {
+                                  const dateStr = state?.activeLabel;
+                                  const payload = state?.activePayload?.[0]?.payload || {};
+                                  if (dateStr) {
+                                    openCalendarForPoint(String(dateStr), c.title || 'taAI chart event', `Line metric from taAI: ${JSON.stringify(payload)}`);
+                                  }
+                                }}
+                              >
                                 <CartesianGrid stroke="rgba(255,255,255,.08)" />
                                 <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
                                 <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
@@ -355,7 +398,16 @@ export default function App() {
             <div className="title">Weekly Sales vs Baseline Prediction vs Simulated Prediction</div>
             <div className="chartWrap">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
+                <LineChart
+                  data={trendData}
+                  onClick={(state) => {
+                    const dateStr = state?.activeLabel;
+                    const payload = state?.activePayload?.[0]?.payload || {};
+                    if (dateStr) {
+                      openCalendarForPoint(String(dateStr), `taAI Weekly Sales Review (${store === 'all' ? 'All Stores' : `Store ${store}`})`, `Trend point from dashboard: ${JSON.stringify(payload)}`);
+                    }
+                  }}
+                >
                   <CartesianGrid stroke="rgba(255,255,255,.08)" />
                   <XAxis dataKey="Date" tick={{ fill: '#b7c8cd', fontSize: 10 }} />
                   <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
@@ -403,8 +455,26 @@ export default function App() {
                     labelFormatter={() => factor}
                     contentStyle={{ background: 'rgba(4, 23, 31, 0.95)', border: '1px solid rgba(176,210,214,.28)', borderRadius: 10 }}
                   />
-                  <Scatter data={scatterData.filter((d) => !d.holiday)} name="Normal week" fill="#2ecdc4" />
-                  <Scatter data={scatterData.filter((d) => d.holiday)} name="Holiday week" fill="#f5c76e" />
+                  <Scatter
+                    data={scatterData.filter((d) => !d.holiday)}
+                    name="Normal week"
+                    fill="#2ecdc4"
+                    onClick={(point) => {
+                      if (point?.date) {
+                        openCalendarForPoint(String(point.date), `taAI Scatter Review (${factor})`, `Normal-week point: factor=${point.x}, simulated=${point.y}`);
+                      }
+                    }}
+                  />
+                  <Scatter
+                    data={scatterData.filter((d) => d.holiday)}
+                    name="Holiday week"
+                    fill="#f5c76e"
+                    onClick={(point) => {
+                      if (point?.date) {
+                        openCalendarForPoint(String(point.date), `taAI Holiday Scatter Review (${factor})`, `Holiday-week point: factor=${point.x}, simulated=${point.y}`);
+                      }
+                    }}
+                  />
                   <Line type="linear" data={scatterTrend} dataKey="y" stroke="#8ddcff" dot={false} strokeWidth={2} isAnimationActive={false} />
                 </ScatterChart>
               </ResponsiveContainer>
@@ -412,6 +482,7 @@ export default function App() {
             <div className="mini scatterMeta">
               Trend: y = {scatterFit.slope.toFixed(2)}x + {scatterFit.intercept.toFixed(0)} | corr = {scatterFit.corr.toFixed(3)} | R² = {scatterFit.r2.toFixed(3)}
             </div>
+            <div className="mini scatterMeta">Tip: click a line/scatter point to open a Google Calendar event for that week.</div>
           </div>
 
           <div className="panel span4">

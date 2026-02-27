@@ -114,6 +114,20 @@ cd /Users/panshulaj/Documents/front/dashboard
 Output file:
 - `dashboard/backend/finetune/taai_llama_finetune.jsonl`
 
+## LangChain RAG (Implemented)
+
+- RAG engine module: `dashboard/backend/rag_langchain.py`
+- Chat retrieval is now wired through this engine.
+- Status endpoint: `GET /api/taai/rag/status`
+- Query endpoint: `GET /api/taai/rag/query?q=...`
+
+If you want full LangChain BM25 retriever support (instead of fallback retrieval), install:
+
+```bash
+cd /Users/panshulaj/Documents/front
+.venv/bin/pip install langchain-core langchain-community rank-bm25
+```
+
 ## Data Behavior
 
 - If `DATA_PATH` points to a valid Walmart CSV, backend uses that.

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.rag_langchain import LANGCHAIN_AVAILABLE, TaAIRAG
 from backend.train_notebook_artifact import FEATURES, ARTIFACT_PATH, load_csv_data, resolve_data_path, train_artifact
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ MODEL_PARAMETRICS: dict[str, dict[str, float]] = {}
 MODEL_INFO: dict[str, Any] = {}
 CHAT_SESSIONS: dict[str, list[dict[str, str]]] = {}
 SCHEDULER: BackgroundScheduler | None = None
+RAG_ENGINE = TaAIRAG(BASE_DIR)
 
 
 class ChatRequest(BaseModel):
@@ -325,6 +327,7 @@ def _refresh_model_state() -> None:
         MODEL_COEFFICIENTS = coeffs
         MODEL_PARAMETRICS = parametrics if isinstance(parametrics, dict) else {}
         MODEL_INFO = info
+        RAG_ENGINE.refresh(rows, coeffs, info)
 
 
 def _start_scheduler() -> None:
@@ -438,9 +441,19 @@ def _retrieve_knowledge(text: str, k: int = 2) -> list[str]:
         scored.append((score, s["text"]))
     scored.sort(key=lambda x: x[0], reverse=True)
     picked = [txt for sc, txt in scored if sc > 0][:k]
+    rag_hits = RAG_ENGINE.retrieve(text, k=max(2, k))
+    if rag_hits:
+        picked.extend(rag_hits[: max(1, k)])
     if not picked:
         picked = [KNOWLEDGE_SNIPPETS[0]["text"]]
-    return picked
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in picked:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out[: max(2, k + 1)]
 
 
 def _analysis_snapshot(store: str = "all", weeks: int = 160) -> dict[str, Any]:
@@ -1404,6 +1417,22 @@ def taai_suggestions() -> dict[str, Any]:
 def taai_mcp_context(message: str = "Summarize current deployment context.") -> dict[str, Any]:
     intent = _classify_intent(message)
     return _mcp_context_packet(message, [], intent)
+
+
+@app.get("/api/taai/rag/status")
+def taai_rag_status() -> dict[str, Any]:
+    return {
+        "langchain_available": bool(LANGCHAIN_AVAILABLE),
+        "documents_indexed": len(getattr(RAG_ENGINE, "docs", [])),
+        "retriever_ready": bool(getattr(RAG_ENGINE, "retriever", None)),
+        "model_source": MODEL_INFO.get("model_source", "unknown"),
+    }
+
+
+@app.get("/api/taai/rag/query")
+def taai_rag_query(q: str, k: int = 4) -> dict[str, Any]:
+    hits = RAG_ENGINE.retrieve(q, k=max(1, min(8, int(k))))
+    return {"query": q, "hits": hits}
 
 
 @app.get("/api/taai/insights")
