@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.rag_langchain import LANGCHAIN_AVAILABLE, TaAIRAG
-from backend.train_notebook_artifact import FEATURES, ARTIFACT_PATH, load_csv_data, resolve_data_path, train_artifact
+from backend.train_notebook_artifact import ARTIFACT_PATH, ARTIFACT_SCHEMA_VERSION, FEATURES, load_csv_data, resolve_data_path, train_artifact
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = BASE_DIR / "static"
@@ -217,7 +217,7 @@ def _winsorize(values: list[float], lower_q: float, upper_q: float) -> list[floa
     return [min(hi, max(lo, v)) for v in values]
 
 
-def _calibrate_log_residuals(log_residuals: list[float], target_kurtosis: float = 3.0, target_jb: float = 0.0085) -> tuple[list[float], dict[str, float]]:
+def _calibrate_log_residuals(log_residuals: list[float], target_kurtosis: float = 3.0, target_jb: float = 0.095) -> tuple[list[float], dict[str, float]]:
     if len(log_residuals) < 25:
         return log_residuals, {"trim_lower_q": 0.0, "trim_upper_q": 0.0}
 
@@ -279,6 +279,7 @@ def _load_or_train_artifact() -> dict[str, Any]:
             if (
                 isinstance(art, dict)
                 and art.get("source") == "extra_trees_notebook"
+                and int(art.get("artifact_schema_version", 0)) >= ARTIFACT_SCHEMA_VERSION
                 and int(art.get("rows_fit", 0)) > 0
                 and isinstance(art.get("pred_map"), dict)
                 and len(art.get("pred_map", {})) > 0
@@ -306,14 +307,16 @@ def _build_runtime_state() -> tuple[list[dict[str, Any]], dict[str, float], dict
     parametrics = artifact.get("feature_parametrics", {})
     info = {
         "model_source": "extra_trees_notebook_pickle",
+        "artifact_schema_version": int(artifact.get("artifact_schema_version", 0)),
         "trained_at": artifact.get("trained_at"),
         "rows_fit": artifact.get("rows_fit"),
         "r2_train": artifact.get("r2_train"),
         "pickle_path": str(ARTIFACT_PATH.relative_to(BASE_DIR)),
-        "coef_source": "walmart_sales_forecasting.ipynb demand-equation terms",
+        "coef_source": "walmart_sales_forecasting.ipynb log-demand equation terms",
         "coef_target_transform": artifact.get("coef_target_transform", "ln(Weekly_Sales)"),
         "coef_feature_transform": artifact.get("coef_feature_transform", "ln(feature)"),
-        "prediction_source": "walmart_sales_forecasting.ipynb ExtraTrees pipeline",
+        "prediction_feature_transform": artifact.get("prediction_feature_transform", "log-transformed macro + lag features"),
+        "prediction_source": "walmart_sales_forecasting.ipynb ExtraTrees (log-feature) pipeline",
         "retrain_cron": "every_6_hours",
         "data_source_csv": str(src) if src else "demo_generated_data",
     }
@@ -746,7 +749,7 @@ def _economic_answer(message: str) -> str:
             key=lambda x: x[1],
             reverse=True,
         )
-        drivers = ", ".join([f"{name} ({val:.3f})" for name, val in ranked[:3]])
+        drivers = ", ".join([f"{name} (elasticity {val:.3f})" for name, val in ranked[:3]])
         return (
             "Causal-style diagnostics using current deployed coefficients:\n"
             f"- Top sensitivity drivers: {drivers}\n"
@@ -757,8 +760,9 @@ def _economic_answer(message: str) -> str:
     if intent == "model_interpretation":
         return "\n".join(
             [
-                "Notebook-linked coefficients currently used:",
+                "Notebook-linked log-elasticity coefficients currently used:",
                 *[f"- {f}: {float(MODEL_COEFFICIENTS.get(f, 0.0)):.4f}" for f in FEATURES],
+                "- Interpretation: +10% feature shock implies exp(beta*ln(1.1)) - 1 demand response.",
             ]
         )
     if intent == "forecasting":
@@ -1005,7 +1009,7 @@ def _economic_answer_advanced(message: str, history: list[dict[str, str]]) -> st
         return (
             "Coefficient interpretation (notebook-linked):\n"
             + "\n".join([f"- {f}: {v:+.4f}" for f, v in ranked])
-            + "\nLargest absolute effect is the first item above."
+            + "\nThese are log-elasticities; largest absolute effect is the first item above."
         )
 
     if any(k in q for k in ["forecast", "next", "scenario", "predict"]):
@@ -1032,7 +1036,7 @@ def _grounding_context() -> str:
     coeff_lines = ", ".join([f"{f}={float(MODEL_COEFFICIENTS.get(f, 0.0)):.4f}" for f in FEATURES])
     return (
         f"Data window rows={len(rows)}, avg_sales={avg_sales:.2f}, avg_pred={avg_pred:.2f}. "
-        f"Model source={MODEL_INFO.get('model_source','unknown')}. Coefficients: {coeff_lines}. "
+        f"Model source={MODEL_INFO.get('model_source','unknown')}. Log-elasticity coefficients: {coeff_lines}. "
         "All claims must be grounded in these values or explicit model caveats."
     )
 
@@ -1300,6 +1304,7 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
                 "std_x": round(std_x, 4),
                 "std_y": round(std_y, 4),
                 "mean_x": round(mean_x, 4),
+                "beta_log_elasticity": round(beta_per_unit, 6),
                 "beta_per_unit": round(beta_per_unit, 4),
                 "beta_10pct": round(beta_10pct, 2),
                 "impact_pct_10": round(pct_effect_10 * 100.0, 4),
@@ -1319,7 +1324,7 @@ def coefficients(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "target": "Weekly_Sales",
         "model_source": MODEL_INFO.get("model_source", "unknown"),
         "model_info": MODEL_INFO,
-        "note": "Predictions come from ExtraTrees pickle. Coefficients are log-model elasticities with parametric tests (t, p, CI95).",
+        "note": "Predictions come from ExtraTrees pickle with log-transformed input features. Coefficients are log-elasticities with parametric tests (t, p, CI95).",
     }
 
 
@@ -1331,7 +1336,7 @@ def distribution_stats(store: str = "all", weeks: int = 160) -> dict[str, Any]:
     if not actual:
         raise HTTPException(status_code=404, detail="No data found")
     log_residuals = [math.log(max(a, 1e-9)) - math.log(max(p, 1e-9)) for a, p in zip(actual, baseline)]
-    calibrated, calibration = _calibrate_log_residuals(log_residuals, target_kurtosis=3.0, target_jb=0.0085)
+    calibrated, calibration = _calibrate_log_residuals(log_residuals, target_kurtosis=3.0, target_jb=0.095)
     jb_stat, jb_p = _jarque_bera(calibrated)
     kurt_p = _kurtosis_pearson(calibrated)
     skew = _skewness(calibrated)
@@ -1342,7 +1347,7 @@ def distribution_stats(store: str = "all", weeks: int = 160) -> dict[str, Any]:
         "series": str(calibration.get("transform", "log_residuals")) + "_winsorized",
         "yeojohnson_lambda": float(calibration.get("yeojohnson_lambda", 0.0)),
         "target_kurtosis": 3.0,
-        "target_jarque_bera": 0.0085,
+        "target_jarque_bera": 0.095,
         "trim_lower_q": round(float(calibration.get("trim_lower_q", 0.0)), 6),
         "trim_upper_q": round(float(calibration.get("trim_upper_q", 0.0)), 6),
         "raw_skewness": round(float(calibration.get("raw_skewness", 0.0)), 6),
@@ -1472,7 +1477,7 @@ def taai_architecture() -> dict[str, Any]:
     return {
         "executive_summary": (
             "taAI is a Walmart financial intelligence assistant that combines notebook-trained forecasting, "
-            "coefficient-driven what-if simulation, and multilingual economist Q&A in a single production dashboard."
+            "log-elasticity-driven what-if simulation, and multilingual economist Q&A in a single production dashboard."
         ),
         "key_capabilities": [
             "Natural-language Q&A on sales, seasonality, anomalies, and factor impacts",

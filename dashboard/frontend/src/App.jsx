@@ -139,21 +139,23 @@ export default function App() {
   }, [theme]);
 
   const adjustedRows = useMemo(() => {
-    const beta = Object.fromEntries(coef.map((c) => [c.feature, Number(c.beta_per_unit || 0)]));
+    const beta = Object.fromEntries(coef.map((c) => [c.feature, Number(c.beta_log_elasticity ?? c.beta_per_unit ?? 0)]));
     return rows.map((r) => {
-      let delta = 0;
+      let logShock = 0;
       const xAdj = {};
       for (const f of FEATURES) {
         const base = Number(r[f]);
         const pct = Number(adjustments[f] || 0) / 100;
         const newVal = base * (1 + pct);
+        const ratio = Math.max(1e-6, newVal / Math.max(base, 1e-6));
         xAdj[f] = newVal;
-        delta += (newVal - base) * (beta[f] || 0);
+        logShock += Math.log(ratio) * (beta[f] || 0);
       }
+      const simulated = Number(r.Predicted_Sales) * Math.exp(logShock);
       return {
         ...r,
         Adjusted_Factor: xAdj[factor],
-        Simulated_Sales: Math.max(1000, Number(r.Predicted_Sales) + delta),
+        Simulated_Sales: Math.max(1000, simulated),
       };
     });
   }, [rows, coef, adjustments, factor]);
@@ -224,7 +226,9 @@ export default function App() {
     setRows(sr);
     setCorr(cr);
     setCoef(cf.rows || []);
-    const label = cf.model_source === 'extra_trees_notebook_pickle' ? 'Notebook ExtraTrees predictions + notebook coefficients' : 'Model loaded';
+    const label = cf.model_source === 'extra_trees_notebook_pickle'
+      ? 'Log-feature ExtraTrees predictions + log-demand elasticities'
+      : 'Model loaded';
     setStatus(`Showing ${ov.records} rows (${ov.date_min} to ${ov.date_max}) | ${label}`);
     try {
       const ins = await api(`/api/taai/insights?${q}`);
@@ -528,6 +532,7 @@ export default function App() {
                   <p className="field-label">Anomaly weeks: {Number(insights?.snapshot?.anomaly_count || 0)}</p>
                   <p className="field-label">Skewness: {Number(distStats?.skewness || 0).toFixed(3)} | Kurtosis: {Number(distStats?.kurtosis_pearson || 0).toFixed(3)}</p>
                   <p className="field-label">JB: {compact(distStats?.jarque_bera_stat || 0)} | p-value: {Number(distStats?.jarque_bera_pvalue || 0).toExponential(2)}</p>
+                  <p className="field-label">Calibration targets: Kurtosis {Number(distStats?.target_kurtosis || 3).toFixed(3)} | JB {Number(distStats?.target_jarque_bera || 0.095).toFixed(3)}</p>
                 </CardContent>
               </Card>
             </CardContent>

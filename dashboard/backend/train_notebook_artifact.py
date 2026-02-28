@@ -14,6 +14,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parents[1]
 ARTIFACT_DIR = BASE_DIR / "backend" / "model_artifacts"
 ARTIFACT_PATH = ARTIFACT_DIR / "extra_trees_notebook.pkl"
+ARTIFACT_SCHEMA_VERSION = 2
 FEATURES = ["CPI", "Unemployment", "Fuel_Price", "Temperature"]
 DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y", "%d/%m/%Y", "%m/%d/%Y")
 
@@ -140,7 +141,24 @@ def feature_engineer(rows: list[dict[str, Any]]) -> pd.DataFrame:
         df.loc[:, f"sales_lag_{lag}"] = df.groupby("Store")["Weekly_Sales"].shift(lag)
     df.loc[:, "sales_roll4_mean"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).mean()
     df.loc[:, "sales_roll4_std"] = df.groupby("Store")["Weekly_Sales"].shift(1).rolling(4).std()
-    return df.dropna().reset_index(drop=True)
+    df = df.dropna().reset_index(drop=True)
+
+    log_cols = [
+        "Weekly_Sales",
+        "Temperature",
+        "Fuel_Price",
+        "CPI",
+        "Unemployment",
+        "sales_lag_1",
+        "sales_lag_2",
+        "sales_lag_4",
+        "sales_lag_8",
+        "sales_roll4_mean",
+        "sales_roll4_std",
+    ]
+    for col in log_cols:
+        df.loc[:, f"ln_{col}"] = np.log(np.clip(df[col].to_numpy(dtype=float), 1e-6, None))
+    return df
 
 
 def _student_t_sf(value: float, dof: int) -> float:
@@ -224,6 +242,7 @@ def train_artifact() -> dict[str, Any]:
         pred_map = {(int(r["Store"]), str(r["Date"])): float(r["Weekly_Sales"]) for r in raw_rows}
         artifact = {
             "source": "fallback_no_sklearn",
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
             "trained_at": datetime.now(timezone.utc).isoformat(),
             "feature_columns": [],
             "pred_map": pred_map,
@@ -235,7 +254,8 @@ def train_artifact() -> dict[str, Any]:
             },
             "coef_inference": {"rows": {}, "n_obs": int(len(raw_rows)), "dof": 0, "r2": 0.0},
             "coef_target_transform": "ln(Weekly_Sales)",
-            "coef_feature_transform": "ln(feature)",
+            "coef_feature_transform": "ln(feature) for CPI/Unemployment/Fuel_Price/Temperature",
+            "prediction_feature_transform": "log-transformed macro + lag features",
             "rows_fit": int(len(raw_rows)),
             "r2_train": 0.0,
         }
@@ -250,10 +270,10 @@ def train_artifact() -> dict[str, Any]:
     feature_cols = [
         "Store",
         "Holiday_Flag",
-        "Temperature",
-        "Fuel_Price",
-        "CPI",
-        "Unemployment",
+        "ln_Temperature",
+        "ln_Fuel_Price",
+        "ln_CPI",
+        "ln_Unemployment",
         "year",
         "month",
         "weekofyear",
@@ -262,12 +282,12 @@ def train_artifact() -> dict[str, Any]:
         "is_month_end",
         "week_sin",
         "week_cos",
-        "sales_lag_1",
-        "sales_lag_2",
-        "sales_lag_4",
-        "sales_lag_8",
-        "sales_roll4_mean",
-        "sales_roll4_std",
+        "ln_sales_lag_1",
+        "ln_sales_lag_2",
+        "ln_sales_lag_4",
+        "ln_sales_lag_8",
+        "ln_sales_roll4_mean",
+        "ln_sales_roll4_std",
     ]
 
     X = df[feature_cols].copy()
@@ -314,20 +334,6 @@ def train_artifact() -> dict[str, Any]:
         for r in pred_df.itertuples(index=False)
     }
 
-    ln_cols = [
-        "CPI",
-        "Unemployment",
-        "Fuel_Price",
-        "Temperature",
-        "sales_lag_1",
-        "sales_lag_4",
-        "sales_roll4_mean",
-        "sales_roll4_std",
-    ]
-    for c in ln_cols:
-        df.loc[:, f"ln_{c}"] = np.log(np.clip(df[c].to_numpy(dtype=float), 1e-6, None))
-    df.loc[:, "ln_Weekly_Sales"] = np.log(np.clip(df["Weekly_Sales"].to_numpy(dtype=float), 1.0, None))
-
     core_terms = [
         "Holiday_Flag",
         "week_sin",
@@ -365,6 +371,7 @@ def train_artifact() -> dict[str, Any]:
 
     artifact = {
         "source": "extra_trees_notebook",
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "feature_columns": feature_cols,
         "pred_map": pred_map,
@@ -374,6 +381,7 @@ def train_artifact() -> dict[str, Any]:
         "coef_inference": inference,
         "coef_target_transform": "ln(Weekly_Sales)",
         "coef_feature_transform": "ln(feature) for CPI/Unemployment/Fuel_Price/Temperature",
+        "prediction_feature_transform": "log-transformed macro + lag features",
         "rows_fit": int(len(df)),
         "r2_train": float(pipe.score(X, y)),
     }
