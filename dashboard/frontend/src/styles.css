@@ -125,7 +125,7 @@ h1 {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
 }
 
@@ -142,8 +142,11 @@ h1 {
 .metric-val {
   margin: 6px 0 0;
   font-weight: 800;
-  font-size: clamp(1.6rem, 2.8vw, 2.95rem);
+  font-size: clamp(1.3rem, 1.85vw, 2.05rem);
+  line-height: 1.08;
   letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-panel .ui-card-content {
@@ -288,6 +291,13 @@ h1 {
 
 .clickable-dot {
   cursor: pointer;
+  opacity: 0.92;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.clickable-dot:hover {
+  transform: scale(1.22);
+  opacity: 1;
 }
 
 .ui-card {
@@ -442,10 +452,6 @@ input[type='range'] {
   .chart-card.wide,
   .chart-card.side {
     grid-column: span 12;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

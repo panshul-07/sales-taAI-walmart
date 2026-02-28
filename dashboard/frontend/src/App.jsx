@@ -22,6 +22,12 @@ import './styles.css';
 
 const FEATURES = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature'];
 const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n || 0));
+const moneyCompact = (n) => new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  notation: 'compact',
+  maximumFractionDigits: 1,
+}).format(Number(n || 0));
 const compact = (n) => {
   const v = Number(n || 0);
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -189,7 +195,18 @@ export default function App() {
       dates: range,
       details: details || 'Generated from taAI dashboard',
     });
-    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank', 'noopener,noreferrer');
+    const calendarUrl = `https://calendar.google.com/calendar/render?${params.toString()}`;
+    const popup = window.open(calendarUrl, '_blank', 'noopener,noreferrer');
+    if (!popup) window.location.assign(calendarUrl);
+  };
+
+  const openCalendarForTrendPoint = (point) => {
+    if (!isDateLike(point?.Date)) return;
+    openCalendarForPoint(
+      point.Date,
+      `taAI Sales Review (${store === 'all' ? 'All Stores' : `Store ${store}`})`,
+      `Actual=${money(point.Actual)}, Baseline=${money(point.Baseline)}, Simulated=${money(point.Simulated)}`,
+    );
   };
 
   async function loadData() {
@@ -338,11 +355,11 @@ export default function App() {
         </section>
 
         <section className="metric-grid">
-          <Card className="metric-card"><CardContent><p className="metric-key">Average Weekly Sales</p><p className="metric-val">{money(overview?.avg_weekly_sales || 0)}</p></CardContent></Card>
-          <Card className="metric-card"><CardContent><p className="metric-key">Peak Sales</p><p className="metric-val">{money(overview?.peak_sales || 0)}</p></CardContent></Card>
-          <Card className="metric-card"><CardContent><p className="metric-key">Holiday Avg</p><p className="metric-val">{money(overview?.holiday_avg || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Average Weekly Sales</p><p className="metric-val" title={money(overview?.avg_weekly_sales || 0)}>{moneyCompact(overview?.avg_weekly_sales || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Peak Sales</p><p className="metric-val" title={money(overview?.peak_sales || 0)}>{moneyCompact(overview?.peak_sales || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Holiday Avg</p><p className="metric-val" title={money(overview?.holiday_avg || 0)}>{moneyCompact(overview?.holiday_avg || 0)}</p></CardContent></Card>
           <Card className="metric-card"><CardContent><p className="metric-key">Holiday Count</p><p className="metric-val">{overview?.holiday_count ?? 0}</p></CardContent></Card>
-          <Card className="metric-card"><CardContent><p className="metric-key">Simulated Avg Sales</p><p className="metric-val">{money(simulatedAvg)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Simulated Avg Sales</p><p className="metric-val" title={money(simulatedAvg)}>{moneyCompact(simulatedAvg)}</p></CardContent></Card>
         </section>
 
         <Card className="chat-panel">
@@ -443,7 +460,13 @@ export default function App() {
             <CardContent>
               <div className="chart-wrap">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trendData}>
+                  <LineChart
+                    data={trendData}
+                    onClick={(state) => {
+                      const point = state?.activePayload?.[0]?.payload;
+                      if (point) openCalendarForTrendPoint(point);
+                    }}
+                  >
                     <CartesianGrid stroke="rgba(255,255,255,.08)" />
                     <XAxis dataKey="Date" tick={{ fill: 'var(--muted)', fontSize: 10 }} />
                     <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
@@ -456,16 +479,26 @@ export default function App() {
                         <PointDot
                           {...props}
                           stroke="#16b6ad"
-                          onPointClick={(p) => {
-                            if (!isDateLike(p?.Date)) return;
-                            openCalendarForPoint(p.Date, `taAI Sales Review (${store === 'all' ? 'All Stores' : `Store ${store}`})`, `Actual=${money(p.Actual)}, Baseline=${money(p.Baseline)}, Simulated=${money(p.Simulated)}`);
-                          }}
+                          onPointClick={openCalendarForTrendPoint}
                         />
                       )}
                       strokeWidth={2.2}
                     />
-                    <Line type="monotone" dataKey="Baseline" stroke="#7fb6ff" dot={false} strokeWidth={2} />
-                    <Line type="monotone" dataKey="Simulated" stroke="#f2cc72" dot={false} strokeDasharray="5 4" strokeWidth={2} />
+                    <Line
+                      type="monotone"
+                      dataKey="Baseline"
+                      stroke="#7fb6ff"
+                      dot={(props) => <PointDot {...props} stroke="#7fb6ff" onPointClick={openCalendarForTrendPoint} />}
+                      strokeWidth={2}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="Simulated"
+                      stroke="#f2cc72"
+                      dot={(props) => <PointDot {...props} stroke="#f2cc72" onPointClick={openCalendarForTrendPoint} />}
+                      strokeDasharray="5 4"
+                      strokeWidth={2}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
