@@ -12,6 +12,12 @@ import {
   ScatterChart,
   Scatter,
 } from 'recharts';
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import { Input } from './components/ui/input';
+import { Select } from './components/ui/select';
+import { Badge } from './components/ui/badge';
+import { Separator } from './components/ui/separator';
 import './styles.css';
 
 const FEATURES = ['CPI', 'Unemployment', 'Fuel_Price', 'Temperature'];
@@ -41,6 +47,7 @@ const numericDomain = (values, minPad = 1, padRatio = 0.1) => {
   }
   return [min, max];
 };
+
 const fitLine = (points) => {
   const xs = points.map((p) => Number(p.x)).filter((v) => Number.isFinite(v));
   const ys = points.map((p) => Number(p.y)).filter((v) => Number.isFinite(v));
@@ -63,6 +70,7 @@ const fitLine = (points) => {
   const corr = (vx && vy) ? cov / Math.sqrt(vx * vy) : 0;
   return { slope, intercept, corr, r2: corr * corr };
 };
+
 const toGoogleAllDayRange = (dateStr) => {
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
@@ -76,6 +84,27 @@ const toGoogleAllDayRange = (dateStr) => {
   };
   return `${fmt(d)}/${fmt(next)}`;
 };
+
+const isDateLike = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+
+function PointDot({ cx, cy, stroke = '#7fb6ff', payload, onPointClick }) {
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={3.5}
+      fill={stroke}
+      stroke="rgba(2,10,16,.65)"
+      strokeWidth={1}
+      className="clickable-dot"
+      onClick={(e) => {
+        e.stopPropagation();
+        onPointClick?.(payload);
+      }}
+    />
+  );
+}
 
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
@@ -138,6 +167,7 @@ export default function App() {
     date: r.Date,
     holiday: Number(r.Holiday_Flag) === 1,
   })), [adjustedRows]);
+
   const scatterFit = useMemo(() => fitLine(scatterData), [scatterData]);
   const [scatterXMin, scatterXMax] = useMemo(() => numericDomain(scatterData.map((d) => d.x), 0.5, 0.14), [scatterData]);
   const [scatterYMin, scatterYMax] = useMemo(() => numericDomain(scatterData.map((d) => d.y), 1000, 0.12), [scatterData]);
@@ -149,6 +179,7 @@ export default function App() {
   ), [scatterXMin, scatterXMax, scatterFit]);
 
   const simulatedAvg = useMemo(() => adjustedRows.length ? adjustedRows.reduce((a, b) => a + Number(b.Simulated_Sales), 0) / adjustedRows.length : 0, [adjustedRows]);
+
   const openCalendarForPoint = (dateStr, title, details) => {
     const range = toGoogleAllDayRange(String(dateStr || ''));
     if (!range) return;
@@ -261,244 +292,271 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
-      <div className="container">
-        <div className="head">
+    <div className="app-shell">
+      <div className="bg-layer" />
+      <div className="dashboard-wrap">
+        <header className="hero">
           <div>
             <h1>Walmart Forecast Dashboard</h1>
-            <div className="sub">Model-linked forecasting with interactive economist-grade diagnostics</div>
+            <p className="hero-sub">shadcn-style UX, notebook-linked forecasting, MCP-ready diagnostics, and calendar-aware chart interactions.</p>
           </div>
-          <div className="panel themeSwitch">
-            <span className="sub">Theme</span>
-            <button className={`themeBtn ${theme === 'dark' ? 'active' : ''}`} onClick={() => setTheme('dark')}>Dark</button>
-            <button className={`themeBtn ${theme === 'light' ? 'active' : ''}`} onClick={() => setTheme('light')}>Light</button>
-          </div>
-        </div>
+          <Card className="theme-card">
+            <CardContent className="theme-row">
+              <Badge variant="subtle">Theme</Badge>
+              <Button variant={theme === 'dark' ? 'default' : 'outline'} onClick={() => setTheme('dark')}>Dark</Button>
+              <Button variant={theme === 'light' ? 'default' : 'outline'} onClick={() => setTheme('light')}>Light</Button>
+            </CardContent>
+          </Card>
+        </header>
 
-        <div className="grid grid12 topGrid">
-          <div className="panel span8">
-            <div className="row">
+        <section className="top-grid">
+          <Card className="top-panel left">
+            <CardContent className="field-grid">
               <div>
-                <label className="sub">Store</label>
-                <select value={store} onChange={(e) => setStore(e.target.value)}>
+                <label className="field-label">Store</label>
+                <Select value={store} onChange={(e) => setStore(e.target.value)}>
                   <option value="all">All Stores</option>
                   {stores.map((s) => <option key={s.Store} value={String(s.Store)}>Store {s.Store}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
-                <label className="sub">Weeks: {weeks}</label>
+                <label className="field-label">Weeks: {weeks}</label>
                 <input type="range" min="52" max="260" value={weeks} onChange={(e) => setWeeks(Number(e.target.value))} />
               </div>
-            </div>
-          </div>
-          <div className="panel span4">
-            <label className="sub">Scatter Factor</label>
-            <select value={factor} onChange={(e) => setFactor(e.target.value)}>
-              {FEATURES.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-            <div className="sub status">{status}</div>
-          </div>
-        </div>
+            </CardContent>
+          </Card>
 
-        <div className="cards">
-          <div className="card"><div className="k">Average Weekly Sales</div><div className="v">{money(overview?.avg_weekly_sales || 0)}</div></div>
-          <div className="card"><div className="k">Peak Sales</div><div className="v">{money(overview?.peak_sales || 0)}</div></div>
-          <div className="card"><div className="k">Holiday Avg</div><div className="v">{money(overview?.holiday_avg || 0)}</div></div>
-          <div className="card"><div className="k">Holiday Count</div><div className="v">{overview?.holiday_count ?? 0}</div></div>
-          <div className="card"><div className="k">Simulated Avg Sales</div><div className="v">{money(simulatedAvg)}</div></div>
-        </div>
+          <Card className="top-panel right">
+            <CardContent>
+              <label className="field-label">Scatter Factor</label>
+              <Select value={factor} onChange={(e) => setFactor(e.target.value)}>
+                {FEATURES.map((f) => <option key={f} value={f}>{f}</option>)}
+              </Select>
+              <p className="status-text">{status}</p>
+            </CardContent>
+          </Card>
+        </section>
 
-        <div className="panel inlineChat">
-          <div className="chatHead">
+        <section className="metric-grid">
+          <Card className="metric-card"><CardContent><p className="metric-key">Average Weekly Sales</p><p className="metric-val">{money(overview?.avg_weekly_sales || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Peak Sales</p><p className="metric-val">{money(overview?.peak_sales || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Holiday Avg</p><p className="metric-val">{money(overview?.holiday_avg || 0)}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Holiday Count</p><p className="metric-val">{overview?.holiday_count ?? 0}</p></CardContent></Card>
+          <Card className="metric-card"><CardContent><p className="metric-key">Simulated Avg Sales</p><p className="metric-val">{money(simulatedAvg)}</p></CardContent></Card>
+        </section>
+
+        <Card className="chat-panel">
+          <CardHeader className="chat-header">
             <div>
-              <div className="chatTitle">taAI</div>
-              <div className="mini">Open-ended project assistant. Ask any question and request charts directly (example: graph for 3 weeks).</div>
+              <CardTitle>taAI</CardTitle>
+              <CardDescription>Ask anything about this project and request charts. Click chart points to create calendar tasks.</CardDescription>
             </div>
-            <div className="chatHeadBtns">
-              <button className="quickBtn" onClick={() => { setChatSessionId(''); localStorage.removeItem('taai_session_id'); setChatMessages([{ role: 'assistant', content: 'New chat started.' }]); }}>New</button>
-            </div>
-          </div>
-          <div className="chatBody inlineBody">
+            <Button variant="outline" onClick={() => { setChatSessionId(''); localStorage.removeItem('taai_session_id'); setChatMessages([{ role: 'assistant', content: 'New chat started.' }]); }}>New</Button>
+          </CardHeader>
+          <Separator />
+          <CardContent className="chat-body">
             {chatMessages.map((m, i) => (
               <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>
                 {m.content}
                 {m.role !== 'user' && m.intent && (
-                  <div className="msgMeta">
-                    <span>{String(m.intent).replaceAll('_', ' ')}</span>
+                  <div className="msg-meta">
+                    <Badge variant="subtle">{String(m.intent).replaceAll('_', ' ')}</Badge>
                     <span>{Math.round(Number(m.confidence || 0) * 100)}% confidence</span>
                   </div>
                 )}
                 {Array.isArray(m.charts) && m.charts.length > 0 && (
-                  <div className="chatCharts">
+                  <div className="chat-charts">
                     {m.charts.map((c, ci) => (
-                      <div key={ci} className="chatChartCard">
-                        <div className="mini">{c.title || 'Chart'}</div>
-                        <div className="chatChartWrap">
-                          <ResponsiveContainer width="100%" height="100%">
-                            {c.type === 'bar' ? (
-                              <BarChart
-                                data={c.data || []}
-                                onClick={(state) => {
-                                  const payload = state?.activePayload?.[0]?.payload || {};
-                                  const xKey = c.x || 'x';
-                                  const xVal = payload?.[xKey];
-                                  if (xKey.toLowerCase() === 'date' || /^\d{4}-\d{2}-\d{2}$/.test(String(xVal || ''))) {
-                                    openCalendarForPoint(String(xVal), c.title || 'taAI chart event', `Bar metric from taAI: ${JSON.stringify(payload)}`);
-                                  }
-                                }}
-                              >
-                                <CartesianGrid stroke="rgba(255,255,255,.08)" />
-                                <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                                <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                                <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
-                                <Bar dataKey={c.ys?.[0] || 'y'} fill="#2ecdc4" radius={[4, 4, 0, 0]} />
-                              </BarChart>
-                            ) : (
-                              <LineChart
-                                data={c.data || []}
-                                onClick={(state) => {
-                                  const dateStr = state?.activeLabel;
-                                  const payload = state?.activePayload?.[0]?.payload || {};
-                                  if (dateStr) {
-                                    openCalendarForPoint(String(dateStr), c.title || 'taAI chart event', `Line metric from taAI: ${JSON.stringify(payload)}`);
-                                  }
-                                }}
-                              >
-                                <CartesianGrid stroke="rgba(255,255,255,.08)" />
-                                <XAxis dataKey={c.x || 'x'} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                                <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                                <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
-                                {(c.ys || ['y']).map((yk, i) => (
-                                  <Line key={yk} type="monotone" dataKey={yk} dot={false} strokeWidth={2} stroke={i === 0 ? '#2ecdc4' : '#7fb6ff'} />
-                                ))}
-                              </LineChart>
-                            )}
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
+                      <Card key={ci} className="chat-chart-card">
+                        <CardContent>
+                          <p className="field-label">{c.title || 'Chart'}</p>
+                          <div className="chat-chart-wrap">
+                            <ResponsiveContainer width="100%" height="100%">
+                              {c.type === 'bar' ? (
+                                <BarChart
+                                  data={c.data || []}
+                                  onClick={(state) => {
+                                    const payload = state?.activePayload?.[0]?.payload || {};
+                                    const xKey = c.x || 'x';
+                                    const xVal = payload?.[xKey];
+                                    if (isDateLike(xVal)) {
+                                      openCalendarForPoint(String(xVal), c.title || 'taAI chart event', `Bar metric from taAI: ${JSON.stringify(payload)}`);
+                                    }
+                                  }}
+                                >
+                                  <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                                  <XAxis dataKey={c.x || 'x'} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                                  <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                                  <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
+                                  <Bar dataKey={c.ys?.[0] || 'y'} fill="#2ecdc4" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                              ) : (
+                                <LineChart
+                                  data={c.data || []}
+                                  onClick={(state) => {
+                                    const dateStr = state?.activeLabel;
+                                    const payload = state?.activePayload?.[0]?.payload || {};
+                                    if (isDateLike(dateStr)) {
+                                      openCalendarForPoint(String(dateStr), c.title || 'taAI chart event', `Line metric from taAI: ${JSON.stringify(payload)}`);
+                                    }
+                                  }}
+                                >
+                                  <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                                  <XAxis dataKey={c.x || 'x'} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                                  <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                                  <Tooltip formatter={(v) => Number.isFinite(Number(v)) ? compact(v) : v} />
+                                  {(c.ys || ['y']).map((yk, idx) => (
+                                    <Line key={yk} type="monotone" dataKey={yk} dot={false} strokeWidth={2} stroke={idx === 0 ? '#2ecdc4' : '#7fb6ff'} />
+                                  ))}
+                                </LineChart>
+                              )}
+                            </ResponsiveContainer>
+                          </div>
+                        </CardContent>
+                      </Card>
                     ))}
                   </div>
                 )}
               </div>
             ))}
-          </div>
-          <div className="chatSessions">
-            {chatSessions.length === 0 ? <div className="mini">No previous chats.</div> : chatSessions.map((s) => (
-              <button className="quickBtn" key={s.session_id} onClick={() => loadChatSession(s.session_id)}>{s.preview || s.session_id.slice(0, 8)}</button>
+          </CardContent>
+
+          <Separator />
+          <CardContent className="session-row">
+            {chatSessions.length === 0 ? <p className="field-label">No previous chats.</p> : chatSessions.map((s) => (
+              <Button variant="ghost" className="session-btn" key={s.session_id} onClick={() => loadChatSession(s.session_id)}>{s.preview || s.session_id.slice(0, 8)}</Button>
             ))}
-          </div>
-          <div className="chatInput">
-            <input value={chatText} onChange={(e) => setChatText(e.target.value)} placeholder="Ask taAI..." onKeyDown={(e) => e.key === 'Enter' && sendChat(chatText)} />
-            <button disabled={chatBusy} onClick={() => sendChat(chatText)}>{chatBusy ? '...' : 'Send'}</button>
-          </div>
-        </div>
+          </CardContent>
+          <Separator />
 
-        <div className="grid grid12 chartsTop">
-          <div className="panel span8">
-            <div className="title">Weekly Sales vs Baseline Prediction vs Simulated Prediction</div>
-            <div className="chartWrap">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={trendData}
-                  onClick={(state) => {
-                    const dateStr = state?.activeLabel;
-                    const payload = state?.activePayload?.[0]?.payload || {};
-                    if (dateStr) {
-                      openCalendarForPoint(String(dateStr), `taAI Weekly Sales Review (${store === 'all' ? 'All Stores' : `Store ${store}`})`, `Trend point from dashboard: ${JSON.stringify(payload)}`);
-                    }
-                  }}
-                >
-                  <CartesianGrid stroke="rgba(255,255,255,.08)" />
-                  <XAxis dataKey="Date" tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <YAxis tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <Tooltip formatter={(v) => money(v)} />
-                  <Line type="monotone" dataKey="Actual" stroke="#16b6ad" dot={false} strokeWidth={2.2} />
-                  <Line type="monotone" dataKey="Baseline" stroke="#7fb6ff" dot={false} strokeWidth={2.0} />
-                  <Line type="monotone" dataKey="Simulated" stroke="#f2cc72" dot={false} strokeDasharray="5 4" strokeWidth={2.0} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <CardContent className="chat-input-row">
+            <Input value={chatText} onChange={(e) => setChatText(e.target.value)} placeholder="Ask taAI..." onKeyDown={(e) => e.key === 'Enter' && sendChat(chatText)} />
+            <Button disabled={chatBusy} onClick={() => sendChat(chatText)}>{chatBusy ? '...' : 'Send'}</Button>
+          </CardContent>
+        </Card>
 
-          <div className="panel span4">
-            <div className="title">What-If Factor Controls (% Change)</div>
-            <div className="sliderGrid">
-              {FEATURES.map((f) => (
-                <div key={f}>
-                  <label className="mini">{f}: {adjustments[f]}%</label>
-                  <input type="range" min="-30" max="30" value={adjustments[f]} onChange={(e) => setAdjustments((a) => ({ ...a, [f]: Number(e.target.value) }))} />
-                </div>
-              ))}
-            </div>
-            <div className="insightBox">
-              <div className="mini">taAI insight snapshot (current filter)</div>
-              <div className="mini">Avg actual: {money(insights?.snapshot?.avg_sales || 0)} | Avg predicted: {money(insights?.snapshot?.avg_pred || 0)}</div>
-              <div className="mini">Residual mean: {compact(insights?.snapshot?.residual_mean || 0)} | Residual std: {compact(insights?.snapshot?.residual_std || 0)}</div>
-              <div className="mini">Estimated anomaly weeks: {Number(insights?.snapshot?.anomaly_count || 0)}</div>
-              <div className="mini">Skewness: {Number(distStats?.skewness || 0).toFixed(3)} | Kurtosis (Pearson): {Number(distStats?.kurtosis_pearson || 0).toFixed(3)}</div>
-              <div className="mini">JB: {compact(distStats?.jarque_bera_stat || 0)} | p-value: {Number(distStats?.jarque_bera_pvalue || 0).toExponential(2)}</div>
-            </div>
-          </div>
-        </div>
+        <section className="chart-grid top">
+          <Card className="chart-card wide">
+            <CardHeader>
+              <CardTitle>Weekly Sales vs Baseline vs Simulated</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                    <XAxis dataKey="Date" tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                    <YAxis tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                    <Tooltip formatter={(v) => money(v)} />
+                    <Line
+                      type="monotone"
+                      dataKey="Actual"
+                      stroke="#16b6ad"
+                      dot={(props) => (
+                        <PointDot
+                          {...props}
+                          stroke="#16b6ad"
+                          onPointClick={(p) => {
+                            if (!isDateLike(p?.Date)) return;
+                            openCalendarForPoint(p.Date, `taAI Sales Review (${store === 'all' ? 'All Stores' : `Store ${store}`})`, `Actual=${money(p.Actual)}, Baseline=${money(p.Baseline)}, Simulated=${money(p.Simulated)}`);
+                          }}
+                        />
+                      )}
+                      strokeWidth={2.2}
+                    />
+                    <Line type="monotone" dataKey="Baseline" stroke="#7fb6ff" dot={false} strokeWidth={2} />
+                    <Line type="monotone" dataKey="Simulated" stroke="#f2cc72" dot={false} strokeDasharray="5 4" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="field-label">Point-click opens a Google Calendar task for that week.</p>
+            </CardContent>
+          </Card>
 
-        <div className="grid grid12 chartsBottom">
-          <div className="panel span8">
-            <div className="title">Scatter: Adjusted Factor vs Simulated Sales</div>
-            <div className="chartWrap">
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart>
-                  <CartesianGrid stroke="rgba(255,255,255,.08)" />
-                  <XAxis type="number" domain={[scatterXMin, scatterXMax]} dataKey="x" tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <YAxis type="number" domain={[scatterYMin, scatterYMax]} dataKey="y" tickFormatter={compact} tick={{ fill: '#b7c8cd', fontSize: 10 }} />
-                  <Tooltip
-                    formatter={(v, n) => (n === 'y' ? money(v) : Number(v).toFixed(3))}
-                    labelFormatter={() => factor}
-                    contentStyle={{ background: 'rgba(4, 23, 31, 0.95)', border: '1px solid rgba(176,210,214,.28)', borderRadius: 10 }}
-                  />
-                  <Scatter
-                    data={scatterData.filter((d) => !d.holiday)}
-                    name="Normal week"
-                    fill="#2ecdc4"
-                    onClick={(point) => {
-                      if (point?.date) {
-                        openCalendarForPoint(String(point.date), `taAI Scatter Review (${factor})`, `Normal-week point: factor=${point.x}, simulated=${point.y}`);
-                      }
-                    }}
-                  />
-                  <Scatter
-                    data={scatterData.filter((d) => d.holiday)}
-                    name="Holiday week"
-                    fill="#f5c76e"
-                    onClick={(point) => {
-                      if (point?.date) {
-                        openCalendarForPoint(String(point.date), `taAI Holiday Scatter Review (${factor})`, `Holiday-week point: factor=${point.x}, simulated=${point.y}`);
-                      }
-                    }}
-                  />
-                  <Line type="linear" data={scatterTrend} dataKey="y" stroke="#8ddcff" dot={false} strokeWidth={2} isAnimationActive={false} />
-                </ScatterChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="mini scatterMeta">
-              Trend: y = {scatterFit.slope.toFixed(2)}x + {scatterFit.intercept.toFixed(0)} | corr = {scatterFit.corr.toFixed(3)} | R² = {scatterFit.r2.toFixed(3)}
-            </div>
-            <div className="mini scatterMeta">Tip: click a line/scatter point to open a Google Calendar event for that week.</div>
-          </div>
+          <Card className="chart-card side">
+            <CardHeader>
+              <CardTitle>What-If Controls (% Change)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="slider-grid">
+                {FEATURES.map((f) => (
+                  <div key={f}>
+                    <label className="field-label">{f}: {adjustments[f]}%</label>
+                    <input type="range" min="-30" max="30" value={adjustments[f]} onChange={(e) => setAdjustments((a) => ({ ...a, [f]: Number(e.target.value) }))} />
+                  </div>
+                ))}
+              </div>
 
-          <div className="panel span4">
-            <div className="title">Correlations + Coefficients</div>
-            <div className="bars">
+              <Card className="insight-card">
+                <CardContent>
+                  <p className="field-label">taAI diagnostic snapshot</p>
+                  <p className="field-label">Avg actual: {money(insights?.snapshot?.avg_sales || 0)} | Avg predicted: {money(insights?.snapshot?.avg_pred || 0)}</p>
+                  <p className="field-label">Residual mean: {compact(insights?.snapshot?.residual_mean || 0)} | Residual std: {compact(insights?.snapshot?.residual_std || 0)}</p>
+                  <p className="field-label">Anomaly weeks: {Number(insights?.snapshot?.anomaly_count || 0)}</p>
+                  <p className="field-label">Skewness: {Number(distStats?.skewness || 0).toFixed(3)} | Kurtosis: {Number(distStats?.kurtosis_pearson || 0).toFixed(3)}</p>
+                  <p className="field-label">JB: {compact(distStats?.jarque_bera_stat || 0)} | p-value: {Number(distStats?.jarque_bera_pvalue || 0).toExponential(2)}</p>
+                </CardContent>
+              </Card>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="chart-grid bottom">
+          <Card className="chart-card wide">
+            <CardHeader>
+              <CardTitle>Scatter: Adjusted Factor vs Simulated Sales</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart>
+                    <CartesianGrid stroke="rgba(255,255,255,.08)" />
+                    <XAxis type="number" domain={[scatterXMin, scatterXMax]} dataKey="x" tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                    <YAxis type="number" domain={[scatterYMin, scatterYMax]} dataKey="y" tickFormatter={compact} tick={{ fill: 'var(--muted)', fontSize: 10 }} />
+                    <Tooltip
+                      formatter={(v, n) => (n === 'y' ? money(v) : Number(v).toFixed(3))}
+                      labelFormatter={() => factor}
+                      contentStyle={{ background: 'rgba(4, 23, 31, 0.95)', border: '1px solid rgba(176,210,214,.28)', borderRadius: 10 }}
+                    />
+                    <Scatter
+                      data={scatterData.filter((d) => !d.holiday)}
+                      name="Normal week"
+                      fill="#2ecdc4"
+                      onClick={(point) => {
+                        if (point?.date) openCalendarForPoint(point.date, `taAI Scatter Review (${factor})`, `Normal-week point: factor=${point.x}, simulated=${point.y}`);
+                      }}
+                    />
+                    <Scatter
+                      data={scatterData.filter((d) => d.holiday)}
+                      name="Holiday week"
+                      fill="#f5c76e"
+                      onClick={(point) => {
+                        if (point?.date) openCalendarForPoint(point.date, `taAI Holiday Scatter Review (${factor})`, `Holiday-week point: factor=${point.x}, simulated=${point.y}`);
+                      }}
+                    />
+                    <Line type="linear" data={scatterTrend} dataKey="y" stroke="#8ddcff" dot={false} strokeWidth={2} isAnimationActive={false} />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="field-label">Trend: y = {scatterFit.slope.toFixed(2)}x + {scatterFit.intercept.toFixed(0)} | corr = {scatterFit.corr.toFixed(3)} | R² = {scatterFit.r2.toFixed(3)}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="chart-card side">
+            <CardHeader>
+              <CardTitle>Correlations + Coefficients</CardTitle>
+            </CardHeader>
+            <CardContent className="corr-grid">
               {corr.map((c) => (
-                <div className="bar" key={c.feature}>
-                  <div className="barTop"><span>{c.feature}</span><span>{Number(c.corr).toFixed(3)}</span></div>
-                  <div className="barTrack"><div className="barFill" style={{ width: `${Math.min(100, Math.abs(Number(c.corr)) * 100)}%`, background: Number(c.corr) >= 0 ? '#35c4a1' : '#f5b042' }} /></div>
+                <div className="corr-item" key={c.feature}>
+                  <div className="corr-top"><span>{c.feature}</span><span>{Number(c.corr).toFixed(3)}</span></div>
+                  <div className="corr-track"><div className="corr-fill" style={{ width: `${Math.min(100, Math.abs(Number(c.corr)) * 100)}%`, background: Number(c.corr) >= 0 ? '#35c4a1' : '#f5b042' }} /></div>
                 </div>
               ))}
-            </div>
-          </div>
-        </div>
+            </CardContent>
+          </Card>
+        </section>
       </div>
-
     </div>
   );
 }
